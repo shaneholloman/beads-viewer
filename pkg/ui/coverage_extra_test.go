@@ -520,6 +520,12 @@ func TestBoardAndInsightsExtraKeys(t *testing.T) {
 	}
 
 	// Time-travel input enter path (will fail gracefully without git)
+	origWD, _ := os.Getwd()
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
 	m.showTimeTravelPrompt = true
 	m.focused = focusTimeTravelInput
 	m.timeTravelInput.SetValue("HEAD~1")
