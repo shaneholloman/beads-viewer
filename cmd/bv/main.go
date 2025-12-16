@@ -640,6 +640,30 @@ func main() {
 			fmt.Printf("  → Filtering to %d open issues\n", len(exportIssues))
 		}
 
+		// Load and run pre-export hooks (bv-qjc.3)
+		cwd, _ := os.Getwd()
+		var pagesExecutor *hooks.Executor
+		if !*noHooks {
+			hookLoader := hooks.NewLoader(hooks.WithProjectDir(cwd))
+			if err := hookLoader.Load(); err != nil {
+				fmt.Printf("  → Warning: failed to load hooks: %v\n", err)
+			} else if hookLoader.HasHooks() {
+				fmt.Println("  → Running pre-export hooks...")
+				ctx := hooks.ExportContext{
+					ExportPath:   *exportPages,
+					ExportFormat: "html",
+					IssueCount:   len(exportIssues),
+					Timestamp:    time.Now(),
+				}
+				pagesExecutor = hooks.NewExecutor(hookLoader.Config(), ctx)
+
+				if err := pagesExecutor.RunPreExport(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: pre-export hook failed: %v\n", err)
+					os.Exit(1)
+				}
+			}
+		}
+
 		// Build graph and compute stats
 		fmt.Println("  → Running graph analysis...")
 		analyzer := analysis.NewAnalyzer(exportIssues)
@@ -688,6 +712,21 @@ func main() {
 		if err := copyViewerAssets(*exportPages, *pagesTitle); err != nil {
 			fmt.Fprintf(os.Stderr, "Error copying assets: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Run post-export hooks (bv-qjc.3)
+		if pagesExecutor != nil {
+			fmt.Println("  → Running post-export hooks...")
+			if err := pagesExecutor.RunPostExport(); err != nil {
+				fmt.Printf("  → Warning: post-export hook failed: %v\n", err)
+				// Don't exit, just warn
+			}
+
+			// Print hook summary if any hooks ran
+			if len(pagesExecutor.Results()) > 0 {
+				fmt.Println("")
+				fmt.Println(pagesExecutor.Summary())
+			}
 		}
 
 		fmt.Println("")
