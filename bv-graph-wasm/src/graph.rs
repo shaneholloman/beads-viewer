@@ -214,6 +214,30 @@ impl DiGraph {
         use crate::algorithms::topo;
         topo::is_dag(self)
     }
+
+    /// Compute critical path heights (depth in DAG).
+    /// Returns heights as JSON array, or zeros for cyclic graphs.
+    #[wasm_bindgen(js_name = criticalPathHeights)]
+    pub fn critical_path_heights(&self) -> JsValue {
+        use crate::algorithms::critical_path;
+        let heights = critical_path::critical_path_heights(self);
+        serde_wasm_bindgen::to_value(&heights).unwrap_or(JsValue::NULL)
+    }
+
+    /// Get nodes on the critical path (those with maximum height).
+    #[wasm_bindgen(js_name = criticalPathNodes)]
+    pub fn critical_path_nodes(&self) -> JsValue {
+        use crate::algorithms::critical_path;
+        let nodes = critical_path::critical_path_nodes(self);
+        serde_wasm_bindgen::to_value(&nodes).unwrap_or(JsValue::NULL)
+    }
+
+    /// Get the maximum height (critical path length).
+    #[wasm_bindgen(js_name = criticalPathLength)]
+    pub fn critical_path_length(&self) -> f64 {
+        use crate::algorithms::critical_path::critical_path_length;
+        critical_path_length(self)
+    }
 }
 
 // Internal methods (not exposed to WASM)

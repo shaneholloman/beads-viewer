@@ -2,6 +2,7 @@
 //!
 //! This module contains ports of the Go graph algorithms to Rust WASM.
 
+pub mod critical_path;
 pub mod topo;
 
 // Algorithm modules will be added as they're implemented:
