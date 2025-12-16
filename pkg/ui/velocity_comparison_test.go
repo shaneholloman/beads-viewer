@@ -125,8 +125,8 @@ func TestVelocityComparisonView(t *testing.T) {
 func TestVelocityComparisonWithData(t *testing.T) {
 	theme := Theme{
 		Renderer:  lipgloss.DefaultRenderer(),
-		Primary:   lipgloss.Color("#00ff00"),
-		Secondary: lipgloss.Color("#888888"),
+		Primary:   lipgloss.AdaptiveColor{Light: "#00ff00", Dark: "#00ff00"},
+		Secondary: lipgloss.AdaptiveColor{Light: "#888888", Dark: "#888888"},
 		Base:      lipgloss.NewStyle(),
 	}
 	m := NewVelocityComparisonModel(theme)
