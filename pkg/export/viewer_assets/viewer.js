@@ -788,6 +788,103 @@ function getTopBlockers(limit = 10) {
 }
 
 /**
+ * Get top issues by betweenness centrality (bottlenecks)
+ */
+function getTopByBetweenness(limit = 10) {
+  // Try betweenness column if it exists
+  try {
+    const results = execQuery(`
+      SELECT * FROM issue_overview_mv
+      WHERE betweenness > 0
+      ORDER BY betweenness DESC
+      LIMIT ?
+    `, [limit]);
+    if (results.length > 0) return results;
+  } catch {
+    // Column may not exist
+  }
+
+  // Fallback: use WASM if available
+  if (GRAPH_STATE.ready) {
+    const betweenness = GRAPH_STATE.graph.betweenness();
+    if (betweenness && betweenness.length > 0) {
+      // Get top N by betweenness value
+      const indexed = Array.from(betweenness).map((val, idx) => ({ idx, val }));
+      indexed.sort((a, b) => b.val - a.val);
+      const topNodes = indexed.slice(0, limit);
+
+      return topNodes.map(node => {
+        const id = GRAPH_STATE.graph.nodeId(node.idx);
+        const issue = getIssue(id);
+        if (issue) {
+          issue.betweenness = node.val;
+        }
+        return issue;
+      }).filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Get top issues by critical path height (keystones)
+ */
+function getTopByCriticalPath(limit = 10) {
+  // Try critical_path column if it exists
+  try {
+    const results = execQuery(`
+      SELECT * FROM issue_overview_mv
+      WHERE critical_path_height > 0
+      ORDER BY critical_path_height DESC
+      LIMIT ?
+    `, [limit]);
+    if (results.length > 0) return results;
+  } catch {
+    // Column may not exist
+  }
+
+  // Fallback: use WASM if available
+  if (GRAPH_STATE.ready) {
+    const heights = GRAPH_STATE.graph.criticalPathHeights();
+    if (heights && heights.length > 0) {
+      const indexed = Array.from(heights).map((val, idx) => ({ idx, val }));
+      indexed.sort((a, b) => b.val - a.val);
+      const topNodes = indexed.slice(0, limit);
+
+      return topNodes.map(node => {
+        const id = GRAPH_STATE.graph.nodeId(node.idx);
+        const issue = getIssue(id);
+        if (issue) {
+          issue.critical_path_height = node.val;
+        }
+        return issue;
+      }).filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * Get cycle information from graph
+ */
+function getCycleInfo() {
+  if (!GRAPH_STATE.ready) {
+    return { hasCycles: false, cycleCount: 0, suggestions: null };
+  }
+
+  const hasCycles = GRAPH_STATE.graph.hasCycles();
+  const suggestions = hasCycles ? getCycleBreakSuggestions(5) : null;
+
+  return {
+    hasCycles,
+    cycleCount: suggestions?.cycles?.length || 0,
+    suggestions,
+  };
+}
+
+/**
  * Get export metadata
  */
 function getMeta() {
@@ -1159,12 +1256,20 @@ function beadsApp() {
 
     // Selected issue
     selectedIssue: null,
+    showDepGraph: false,
+    issueNavList: [], // List of issue IDs for j/k navigation
 
     // Graph engine state
     graphReady: false,
     graphMetrics: null,
     whatIfResult: null,
     topKSet: null,
+
+    // Insights view data
+    topByBetweenness: [],
+    topByCriticalPath: [],
+    cycleInfo: null,
+    topImpactIssues: [],
 
     /**
      * Initialize the application
@@ -1215,6 +1320,10 @@ function beadsApp() {
         this.graphReady = await initGraphEngine();
         if (this.graphReady) {
           this.topKSet = getTopKSet(5);
+          this.topByBetweenness = getTopByBetweenness(10);
+          this.topByCriticalPath = getTopByCriticalPath(10);
+          this.cycleInfo = getCycleInfo();
+          this.topImpactIssues = topWhatIf(10);
         }
 
         // Listen for hash changes (browser back/forward)
@@ -1244,13 +1353,22 @@ function beadsApp() {
           // Issue detail view
           this.view = 'issues'; // Keep issues as backdrop
           if (route.params.id) {
+            // Reset state when switching issues
+            this.showDepGraph = false;
+            this.whatIfResult = null;
             this.selectedIssue = getIssue(route.params.id);
+            // Update nav list from current issues
+            if (this.issues.length) {
+              this.issueNavList = this.issues.map(i => i.id);
+            }
           }
           break;
 
         case 'issues':
           this.view = 'issues';
           this.selectedIssue = null;
+          this.showDepGraph = false;
+          this.whatIfResult = null;
           this.filters = { ...this.filters, ...urlState.filters };
           this.sort = urlState.sort;
           this.searchQuery = urlState.searchQuery;
@@ -1394,13 +1512,120 @@ function beadsApp() {
      * Close issue detail (navigates back)
      */
     closeIssue() {
-      // Try to go back; fallback to issues list or dashboard
-      const currentView = this.view;
+      // Reset issue detail state
       this.selectedIssue = null;
+      this.showDepGraph = false;
+      this.whatIfResult = null;
+
+      // Navigate back
+      const currentView = this.view;
       if (currentView === 'issues') {
         navigateToIssues(this.filters, this.sort, this.searchQuery);
       } else {
         navigate('/' + currentView);
+      }
+    },
+
+    /**
+     * Navigate to next/previous issue in the list
+     * @param {number} direction - 1 for next, -1 for previous
+     */
+    navigateIssue(direction) {
+      if (!this.selectedIssue) return;
+
+      // Build navigation list from current issues if not set
+      if (!this.issueNavList.length && this.issues.length) {
+        this.issueNavList = this.issues.map(i => i.id);
+      }
+
+      // Find current position
+      const currentId = this.selectedIssue.id;
+      const currentIndex = this.issueNavList.indexOf(currentId);
+
+      if (currentIndex === -1) {
+        // Current issue not in nav list, just stay
+        return;
+      }
+
+      // Calculate new index with wrapping
+      const newIndex = (currentIndex + direction + this.issueNavList.length) % this.issueNavList.length;
+      const newId = this.issueNavList[newIndex];
+
+      // Reset state and navigate
+      this.showDepGraph = false;
+      this.whatIfResult = null;
+      navigateToIssue(newId);
+    },
+
+    /**
+     * Parse JSON labels string to array
+     */
+    parseLabels(labelsStr) {
+      if (!labelsStr) return [];
+      try {
+        const labels = JSON.parse(labelsStr);
+        return Array.isArray(labels) ? labels : [];
+      } catch {
+        return [];
+      }
+    },
+
+    /**
+     * Render Mermaid dependency graph for the selected issue
+     */
+    async renderDepGraph() {
+      if (!this.selectedIssue || !this.$refs.depGraph) return;
+
+      const issue = this.selectedIssue;
+      const blockedBy = (issue.blocked_by_ids || '').split(',').filter(Boolean).map(s => s.trim());
+      const blocks = (issue.blocks_ids || '').split(',').filter(Boolean).map(s => s.trim());
+
+      if (blockedBy.length === 0 && blocks.length === 0) {
+        this.$refs.depGraph.innerHTML = '<p class="text-gray-500 dark:text-gray-400 text-center">No dependencies</p>';
+        return;
+      }
+
+      // Build Mermaid flowchart
+      let diagram = 'flowchart TB\n';
+
+      // Sanitize ID for mermaid (replace special chars)
+      const sanitizeId = (id) => id.replace(/[^a-zA-Z0-9]/g, '_');
+      const currentId = sanitizeId(issue.id);
+
+      // Style for current node
+      diagram += `  ${currentId}["${issue.id}"]\n`;
+      diagram += `  style ${currentId} fill:#0ea5e9,stroke:#0284c7,color:#fff\n`;
+
+      // Add blocked-by nodes (upstream)
+      for (const depId of blockedBy) {
+        const nodeId = sanitizeId(depId);
+        diagram += `  ${nodeId}["${depId}"]\n`;
+        diagram += `  ${nodeId} --> ${currentId}\n`;
+        diagram += `  style ${nodeId} fill:#fef3c7,stroke:#f59e0b\n`;
+      }
+
+      // Add blocks nodes (downstream)
+      for (const depId of blocks) {
+        const nodeId = sanitizeId(depId);
+        diagram += `  ${nodeId}["${depId}"]\n`;
+        diagram += `  ${currentId} --> ${nodeId}\n`;
+        diagram += `  style ${nodeId} fill:#fee2e2,stroke:#ef4444\n`;
+      }
+
+      // Add click handlers
+      const allIds = [issue.id, ...blockedBy, ...blocks];
+      for (const id of allIds) {
+        const nodeId = sanitizeId(id);
+        diagram += `  click ${nodeId} call window.beadsViewer.navigateToIssue("${id}")\n`;
+      }
+
+      try {
+        // Render the diagram
+        const { svg } = await mermaid.render('dep-graph-' + Date.now(), diagram);
+        this.$refs.depGraph.innerHTML = svg;
+      } catch (err) {
+        console.warn('Mermaid render failed:', err);
+        this.$refs.depGraph.innerHTML = '<p class="text-red-500 text-center text-sm">Failed to render graph</p>';
       }
     },
 
