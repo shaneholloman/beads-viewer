@@ -2094,6 +2094,12 @@ func (m *Model) renderFooter() string {
 		Padding(0, 1).
 		Render(fmt.Sprintf("%s %s", filterIcon, filterTxt))
 
+	labelHint := lipgloss.NewStyle().
+		Foreground(ColorMuted).
+		Background(ColorBgDark).
+		Padding(0, 1).
+		Render("L:labels • h:detail")
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// STATS SECTION - Issue counts with visual indicators
 	// ─────────────────────────────────────────────────────────────────────────
@@ -2230,7 +2236,7 @@ func (m *Model) renderFooter() string {
 
 	// Build the footer
 	var parts []string
-	parts = append(parts, filterBadge)
+	parts = append(parts, filterBadge, labelHint)
 	if workspaceSection != "" {
 		parts = append(parts, workspaceSection)
 	}

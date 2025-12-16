@@ -682,6 +682,9 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 	localSlack := make(map[string]float64)
 	var localCycles [][]string
 
+	betweennessIsApprox := false
+	cyclesTruncated := false
+
 	// PageRank
 	if config.ComputePageRank {
 		prStart := time.Now()
@@ -733,9 +736,9 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 			for id, score := range result.Scores {
 				localBetweenness[a.nodeToID[id]] = score
 			}
-			// Track if approximation was used (update stats.Config, not local copy)
+			// Track if approximation was used
 			if result.Mode == BetweennessApproximate {
-				stats.Config.BetweennessIsApproximate = true
+				betweennessIsApprox = true
 			}
 		case <-timer.C:
 			profile.BetweennessTO = true
@@ -815,6 +818,7 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 				cyclesToProcess := cycles
 				if len(cyclesToProcess) > maxCycles {
 					cyclesToProcess = cyclesToProcess[:maxCycles]
+					cyclesTruncated = true
 				}
 
 				for _, cycle := range cyclesToProcess {
@@ -855,19 +859,27 @@ func (a *Analyzer) computePhase2WithProfile(stats *GraphStats, config AnalysisCo
 	stats.cycles = localCycles
 	stats.phase2Ready = true
 
+	cycleReason := config.CyclesSkipReason
+	if cyclesTruncated {
+		if cycleReason != "" {
+			cycleReason += "; "
+		}
+		cycleReason += "truncated"
+	}
+
 	// record status snapshot
 	stats.status = MetricStatus{
 		PageRank: statusEntry{State: stateFromTiming(config.ComputePageRank, profile.PageRankTO), MS: profile.PageRank},
 		Betweenness: statusEntry{
 			State:  stateFromTiming(config.ComputeBetweenness, profile.BetweennessTO),
-			Reason: betweennessReason(config, config.BetweennessIsApproximate),
+			Reason: betweennessReason(config, betweennessIsApprox),
 			Sample: config.BetweennessSampleSize,
 			MS:     profile.Betweenness,
 		},
 		Eigenvector:  statusEntry{State: stateFromTiming(config.ComputeEigenvector, false), MS: profile.Eigenvector},
 		HITS:         statusEntry{State: stateFromTiming(config.ComputeHITS, profile.HITSTO), Reason: config.HITSSkipReason, MS: profile.HITS},
 		Critical:     statusEntry{State: stateFromTiming(config.ComputeCriticalPath, false), MS: profile.CriticalPath},
-		Cycles:       statusEntry{State: stateFromTiming(config.ComputeCycles, profile.CyclesTO), Reason: config.CyclesSkipReason, MS: profile.Cycles},
+		Cycles:       statusEntry{State: stateFromTiming(config.ComputeCycles, profile.CyclesTO), Reason: cycleReason, MS: profile.Cycles},
 		KCore:        statusEntry{State: "computed", MS: profile.KCore},        // bv-85: always computed (fast)
 		Articulation: statusEntry{State: "computed", MS: profile.Articulation}, // bv-85: computed with k-core
 		Slack:        statusEntry{State: "computed", MS: profile.Slack},        // bv-85: always computed (fast)
@@ -925,6 +937,9 @@ func (a *Analyzer) computePhase2(stats *GraphStats, config AnalysisConfig) {
 	localArticulation := make(map[string]bool)
 	localSlack := make(map[string]float64)
 	var localCycles [][]string
+
+	betweennessIsApprox := false
+	cyclesTruncated := false
 
 	// PageRank with timeout (if enabled)
 	if config.ComputePageRank {
@@ -1086,14 +1101,25 @@ func (a *Analyzer) computePhase2(stats *GraphStats, config AnalysisConfig) {
 	stats.cycles = localCycles
 	stats.phase2Ready = true
 
+	cycleReason := config.CyclesSkipReason
+	if cyclesTruncated {
+		if cycleReason != "" {
+			cycleReason += "; "
+		}
+		cycleReason += "truncated"
+	}
+
 	// Set status for metrics (bv-85: include k-core, articulation, slack)
 	stats.status = MetricStatus{
 		PageRank:     statusEntry{State: stateFromTiming(config.ComputePageRank, false)},
-		Betweenness:  statusEntry{State: stateFromTiming(config.ComputeBetweenness, false)},
+		Betweenness:  statusEntry{
+			State: stateFromTiming(config.ComputeBetweenness, false),
+			Reason: betweennessReason(config, betweennessIsApprox),
+		},
 		Eigenvector:  statusEntry{State: stateFromTiming(config.ComputeEigenvector, false)},
 		HITS:         statusEntry{State: stateFromTiming(config.ComputeHITS, false)},
 		Critical:     statusEntry{State: stateFromTiming(config.ComputeCriticalPath, false)},
-		Cycles:       statusEntry{State: stateFromTiming(config.ComputeCycles, false)},
+		Cycles:       statusEntry{State: stateFromTiming(config.ComputeCycles, false), Reason: cycleReason},
 		KCore:        statusEntry{State: "computed"},
 		Articulation: statusEntry{State: "computed"},
 		Slack:        statusEntry{State: "computed"},
