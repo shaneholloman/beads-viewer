@@ -5,11 +5,11 @@
 pub mod betweenness;
 pub mod critical_path;
 pub mod eigenvector;
+pub mod hits;
 pub mod pagerank;
 pub mod topo;
 
 // Algorithm modules will be added as they're implemented:
-// pub mod hits;
 // pub mod cycles;
 // pub mod kcore;
 // pub mod articulation;

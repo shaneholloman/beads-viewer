@@ -301,6 +301,27 @@ impl DiGraph {
         let scores = betweenness_approx(self, sample_size, None);
         serde_wasm_bindgen::to_value(&scores).unwrap_or(JsValue::NULL)
     }
+
+    /// Compute HITS hub and authority scores.
+    /// Returns JSON object: { hubs: number[], authorities: number[], iterations: number }
+    #[wasm_bindgen(js_name = hits)]
+    pub fn hits(&self, tolerance: f64, max_iterations: u32) -> JsValue {
+        use crate::algorithms::hits::{hits, HITSConfig};
+        let config = HITSConfig {
+            tolerance,
+            max_iterations,
+        };
+        let result = hits(self, &config);
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
+
+    /// Compute HITS with default parameters (tolerance=1e-6, max_iterations=100).
+    #[wasm_bindgen(js_name = hitsDefault)]
+    pub fn hits_default(&self) -> JsValue {
+        use crate::algorithms::hits::hits_default;
+        let result = hits_default(self);
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
 }
 
 // Internal methods (not exposed to WASM)
