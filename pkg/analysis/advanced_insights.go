@@ -1,0 +1,347 @@
+package analysis
+
+import (
+	"sort"
+)
+
+// AdvancedInsightsConfig holds caps and limits for advanced analysis features.
+// All caps ensure deterministic, bounded outputs suitable for agents.
+type AdvancedInsightsConfig struct {
+	// TopK caps
+	TopKSetLimit     int `json:"topk_set_limit"`     // Max items in top-k unlock set (default 5)
+	CoverageSetLimit int `json:"coverage_set_limit"` // Max items in coverage set (default 5)
+
+	// Path caps
+	KPathsLimit   int `json:"k_paths_limit"`   // Max number of critical paths (default 5)
+	PathLengthCap int `json:"path_length_cap"` // Max path length before truncation (default 50)
+
+	// Cycle break caps
+	CycleBreakLimit int `json:"cycle_break_limit"` // Max cycle break suggestions (default 5)
+
+	// Parallel analysis caps
+	ParallelCutLimit int `json:"parallel_cut_limit"` // Max parallel cut suggestions (default 5)
+}
+
+// DefaultAdvancedInsightsConfig returns safe defaults for all caps.
+func DefaultAdvancedInsightsConfig() AdvancedInsightsConfig {
+	return AdvancedInsightsConfig{
+		TopKSetLimit:     5,
+		CoverageSetLimit: 5,
+		KPathsLimit:      5,
+		PathLengthCap:    50,
+		CycleBreakLimit:  5,
+		ParallelCutLimit: 5,
+	}
+}
+
+// AdvancedInsights provides structured, capped outputs for advanced graph analysis.
+// Each feature includes status tracking and usage hints for agent consumption.
+type AdvancedInsights struct {
+	// TopKSet: Best set of k beads maximizing downstream unlocks (submodular selection)
+	TopKSet *TopKSetResult `json:"topk_set,omitempty"`
+
+	// CoverageSet: Minimal set covering all critical paths
+	CoverageSet *CoverageSetResult `json:"coverage_set,omitempty"`
+
+	// KPaths: K-shortest critical paths through the dependency graph
+	KPaths *KPathsResult `json:"k_paths,omitempty"`
+
+	// ParallelCut: Suggestions for maximizing parallel work
+	ParallelCut *ParallelCutResult `json:"parallel_cut,omitempty"`
+
+	// ParallelGain: Parallelization gain metrics for top recommendations
+	ParallelGain *ParallelGainResult `json:"parallel_gain,omitempty"`
+
+	// CycleBreak: Suggestions for breaking cycles with minimal collateral impact
+	CycleBreak *CycleBreakResult `json:"cycle_break,omitempty"`
+
+	// Config: Caps and limits used for this analysis
+	Config AdvancedInsightsConfig `json:"config"`
+
+	// UsageHints: Agent-friendly guidance for each feature
+	UsageHints map[string]string `json:"usage_hints"`
+}
+
+// FeatureStatus tracks computation state for a single advanced feature.
+type FeatureStatus struct {
+	State   string `json:"state"`             // available|pending|skipped|error
+	Reason  string `json:"reason,omitempty"`  // Explanation when skipped/error
+	Capped  bool   `json:"capped,omitempty"`  // True if results were truncated
+	Count   int    `json:"count,omitempty"`   // Number of results returned
+	Limited int    `json:"limited,omitempty"` // Original count before capping
+}
+
+// TopKSetResult represents the optimal set of issues to complete for maximum unlock.
+type TopKSetResult struct {
+	Status       FeatureStatus   `json:"status"`
+	Items        []TopKSetItem   `json:"items,omitempty"`        // Ordered by selection sequence
+	TotalGain    int             `json:"total_gain"`             // Total issues unlocked by set
+	MarginalGain []int           `json:"marginal_gain,omitempty"` // Gain per item added
+	HowToUse     string          `json:"how_to_use"`
+}
+
+// TopKSetItem represents one issue in the top-k unlock set.
+type TopKSetItem struct {
+	ID           string `json:"id"`
+	Title        string `json:"title,omitempty"`
+	MarginalGain int    `json:"marginal_gain"` // Additional unlocks from this pick
+	Unblocks     []string `json:"unblocks,omitempty"` // IDs directly unblocked
+}
+
+// CoverageSetResult represents minimal set covering critical paths.
+type CoverageSetResult struct {
+	Status      FeatureStatus    `json:"status"`
+	Items       []CoverageItem   `json:"items,omitempty"`
+	PathsCovered int             `json:"paths_covered"`
+	TotalPaths   int             `json:"total_paths"`
+	HowToUse    string           `json:"how_to_use"`
+}
+
+// CoverageItem represents one issue in the coverage set.
+type CoverageItem struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title,omitempty"`
+	CoversPaths []int    `json:"covers_paths"` // Indices of paths covered
+}
+
+// KPathsResult represents K-shortest critical paths.
+type KPathsResult struct {
+	Status    FeatureStatus `json:"status"`
+	Paths     []CriticalPath `json:"paths,omitempty"`
+	HowToUse  string         `json:"how_to_use"`
+}
+
+// CriticalPath represents one critical path through the graph.
+type CriticalPath struct {
+	Rank      int      `json:"rank"`      // 1-indexed path rank
+	Length    int      `json:"length"`    // Number of nodes in path
+	IssueIDs  []string `json:"issue_ids"` // Path from source to sink
+	Truncated bool     `json:"truncated,omitempty"` // True if path was capped
+}
+
+// ParallelCutResult represents suggestions for parallel work maximization.
+type ParallelCutResult struct {
+	Status      FeatureStatus     `json:"status"`
+	Suggestions []ParallelCutItem `json:"suggestions,omitempty"`
+	MaxParallel int               `json:"max_parallel"` // Maximum parallelism achievable
+	HowToUse    string            `json:"how_to_use"`
+}
+
+// ParallelCutItem represents one parallel cut suggestion.
+type ParallelCutItem struct {
+	ID            string   `json:"id"`
+	Title         string   `json:"title,omitempty"`
+	ParallelGain  int      `json:"parallel_gain"`  // Additional parallel streams enabled
+	EnabledTracks []string `json:"enabled_tracks,omitempty"` // Track IDs enabled
+}
+
+// ParallelGainResult provides parallelization metrics for top recommendations.
+type ParallelGainResult struct {
+	Status   FeatureStatus       `json:"status"`
+	Metrics  []ParallelGainItem  `json:"metrics,omitempty"`
+	HowToUse string              `json:"how_to_use"`
+}
+
+// ParallelGainItem represents parallelization gain for one issue.
+type ParallelGainItem struct {
+	ID               string  `json:"id"`
+	Title            string  `json:"title,omitempty"`
+	CurrentParallel  int     `json:"current_parallel"`   // Current parallel streams
+	PotentialParallel int    `json:"potential_parallel"` // After completion
+	GainPercent      float64 `json:"gain_percent"`       // Percentage improvement
+}
+
+// CycleBreakResult provides suggestions for breaking cycles.
+type CycleBreakResult struct {
+	Status      FeatureStatus      `json:"status"`
+	Suggestions []CycleBreakItem   `json:"suggestions,omitempty"`
+	CycleCount  int                `json:"cycle_count"`  // Total cycles detected
+	HowToUse    string             `json:"how_to_use"`
+	Advisory    string             `json:"advisory"`     // Important warning text
+}
+
+// CycleBreakItem represents one cycle break suggestion.
+type CycleBreakItem struct {
+	EdgeFrom     string   `json:"edge_from"`     // Source node of edge to remove
+	EdgeTo       string   `json:"edge_to"`       // Target node of edge to remove
+	Impact       int      `json:"impact"`        // Number of cycles broken
+	Collateral   int      `json:"collateral"`    // Dependents affected
+	InCycles     []int    `json:"in_cycles"`     // Cycle indices containing this edge
+	Rationale    string   `json:"rationale"`     // Why this edge is suggested
+}
+
+// DefaultUsageHints returns agent-friendly guidance for each feature.
+func DefaultUsageHints() map[string]string {
+	return map[string]string{
+		"topk_set":      "Best k issues to complete for max downstream unlock. Work these in order.",
+		"coverage_set":  "Minimal set covering all critical paths. Ensures no path is neglected.",
+		"k_paths":       "K-shortest critical paths. Focus on issues appearing in multiple paths.",
+		"parallel_cut":  "Issues that enable parallel work. Complete to maximize team throughput.",
+		"parallel_gain": "Parallelization improvement from completing each issue.",
+		"cycle_break":   "Structural fix suggestions. Apply BEFORE working on cycle members.",
+	}
+}
+
+// GenerateAdvancedInsights creates the advanced insights structure with current data.
+// Features that aren't yet implemented return status=pending.
+func (a *Analyzer) GenerateAdvancedInsights(config AdvancedInsightsConfig) *AdvancedInsights {
+	insights := &AdvancedInsights{
+		Config:     config,
+		UsageHints: DefaultUsageHints(),
+	}
+
+	// TopK Set - placeholder until bv-145 implements
+	insights.TopKSet = &TopKSetResult{
+		Status: FeatureStatus{
+			State:  "pending",
+			Reason: "Awaiting implementation (bv-145)",
+		},
+		HowToUse: DefaultUsageHints()["topk_set"],
+	}
+
+	// Coverage Set - placeholder until bv-152 implements
+	insights.CoverageSet = &CoverageSetResult{
+		Status: FeatureStatus{
+			State:  "pending",
+			Reason: "Awaiting implementation (bv-152)",
+		},
+		HowToUse: DefaultUsageHints()["coverage_set"],
+	}
+
+	// K-Paths - placeholder until bv-153 implements
+	insights.KPaths = &KPathsResult{
+		Status: FeatureStatus{
+			State:  "pending",
+			Reason: "Awaiting implementation (bv-153)",
+		},
+		HowToUse: DefaultUsageHints()["k_paths"],
+	}
+
+	// Parallel Cut - placeholder until bv-154 implements
+	insights.ParallelCut = &ParallelCutResult{
+		Status: FeatureStatus{
+			State:  "pending",
+			Reason: "Awaiting implementation (bv-154)",
+		},
+		HowToUse: DefaultUsageHints()["parallel_cut"],
+	}
+
+	// Parallel Gain - placeholder until bv-129 implements
+	insights.ParallelGain = &ParallelGainResult{
+		Status: FeatureStatus{
+			State:  "pending",
+			Reason: "Awaiting implementation (bv-129)",
+		},
+		HowToUse: DefaultUsageHints()["parallel_gain"],
+	}
+
+	// Cycle Break - implement basic version using existing cycle detection
+	insights.CycleBreak = a.generateCycleBreakSuggestions(config.CycleBreakLimit)
+
+	return insights
+}
+
+// generateCycleBreakSuggestions creates cycle break suggestions from existing cycle data.
+func (a *Analyzer) generateCycleBreakSuggestions(limit int) *CycleBreakResult {
+	stats := a.AnalyzeAsync()
+	stats.WaitForPhase2()
+	cycles := stats.Cycles()
+
+	if len(cycles) == 0 {
+		return &CycleBreakResult{
+			Status: FeatureStatus{
+				State: "available",
+				Count: 0,
+			},
+			CycleCount: 0,
+			HowToUse:   DefaultUsageHints()["cycle_break"],
+			Advisory:   "No cycles detected - dependency graph is a proper DAG.",
+		}
+	}
+
+	// Build edge frequency map across cycles
+	type edgeKey struct{ from, to string }
+	edgeFreq := make(map[edgeKey][]int) // edge -> cycle indices
+
+	for i, cycle := range cycles {
+		if len(cycle) < 2 {
+			continue
+		}
+		// Handle special markers
+		if cycle[0] == "CYCLE_DETECTION_TIMEOUT" || cycle[0] == "..." {
+			continue
+		}
+		for j := 0; j < len(cycle)-1; j++ {
+			key := edgeKey{from: cycle[j], to: cycle[j+1]}
+			edgeFreq[key] = append(edgeFreq[key], i)
+		}
+		// Close the cycle
+		key := edgeKey{from: cycle[len(cycle)-1], to: cycle[0]}
+		edgeFreq[key] = append(edgeFreq[key], i)
+	}
+
+	// Rank edges by frequency (breaking highest-frequency edges affects most cycles)
+	type edgeRank struct {
+		key     edgeKey
+		cycles  []int
+		count   int
+	}
+	var ranked []edgeRank
+	for k, cycs := range edgeFreq {
+		ranked = append(ranked, edgeRank{key: k, cycles: cycs, count: len(cycs)})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].count != ranked[j].count {
+			return ranked[i].count > ranked[j].count
+		}
+		// Deterministic tie-break by edge lexicographically
+		if ranked[i].key.from != ranked[j].key.from {
+			return ranked[i].key.from < ranked[j].key.from
+		}
+		return ranked[i].key.to < ranked[j].key.to
+	})
+
+	// Cap and build suggestions
+	suggestions := make([]CycleBreakItem, 0, limit)
+	for i, r := range ranked {
+		if i >= limit {
+			break
+		}
+		suggestions = append(suggestions, CycleBreakItem{
+			EdgeFrom:  r.key.from,
+			EdgeTo:    r.key.to,
+			Impact:    r.count,
+			Collateral: a.countDependents(r.key.to),
+			InCycles:  r.cycles,
+			Rationale: "Appears in most cycles; removing minimizes structural damage.",
+		})
+	}
+
+	capped := len(ranked) > limit
+	return &CycleBreakResult{
+		Status: FeatureStatus{
+			State:   "available",
+			Count:   len(suggestions),
+			Capped:  capped,
+			Limited: len(ranked),
+		},
+		Suggestions: suggestions,
+		CycleCount:  len(cycles),
+		HowToUse:    DefaultUsageHints()["cycle_break"],
+		Advisory:    "Structural fix—apply cycle breaks BEFORE executing dependents.",
+	}
+}
+
+// countDependents returns the number of issues that depend on the given issue.
+func (a *Analyzer) countDependents(issueID string) int {
+	count := 0
+	nodeID, exists := a.idToNode[issueID]
+	if !exists {
+		return 0
+	}
+	to := a.g.To(nodeID)
+	for to.Next() {
+		count++
+	}
+	return count
+}
