@@ -175,11 +175,28 @@ func main() {
 		fmt.Println("")
 		fmt.Println("  --robot-diff")
 		fmt.Println("      Output diff as JSON (use with --diff-since).")
+		fmt.Println("      Fields: generated_at, resolved_revision, from_data_hash, to_data_hash, diff{...}")
+		fmt.Println("      Diff payload includes metric deltas, cycles introduced/resolved, and modified issues.")
 		fmt.Println("")
 		fmt.Println("  --robot-recipes")
 		fmt.Println("      Lists all available recipes as JSON.")
 		fmt.Println("      Output: {recipes: [{name, description, source}]}")
 		fmt.Println("      Sources: 'builtin', 'user' (~/.config/bv/recipes.yaml), 'project' (.bv/recipes.yaml)")
+		fmt.Println("")
+		fmt.Println("  --robot-insights")
+		fmt.Println("      Graph metrics JSON for agents. Keys: Bottlenecks, CriticalPath, Cycles, Stats, data_hash, analysis_config, status.")
+		fmt.Println("      status captures per-metric state: computed|approx|timeout|skipped with elapsed_ms and reasons.")
+		fmt.Println("")
+		fmt.Println("  --robot-plan")
+		fmt.Println("      Execution tracks grouped for parallel work. Includes data_hash, analysis_config, status.")
+		fmt.Println("      plan.tracks[].items[].unblocks shows what completes next; summary.highest_impact surfaces best unblocker.")
+		fmt.Println("")
+		fmt.Println("  --robot-priority")
+		fmt.Println("      Priority recommendations with explanations. Includes data_hash, analysis_config, status.")
+		fmt.Println("      recommendation fields: id, current_priority, suggested_priority, impact_score, confidence, reasoning[].")
+		fmt.Println("")
+		fmt.Println("  --robot-triage / --robot-next")
+		fmt.Println("      Unified triage (mega command) or single top pick. QuickRef includes top picks, quick_wins, blockers_to_clear.")
 		fmt.Println("")
 		fmt.Println("  --recipe NAME, -r NAME")
 		fmt.Println("      Apply a named recipe to filter and sort issues.")
@@ -659,7 +676,9 @@ func main() {
 		}
 		analyzer.SetConfig(&cfg)
 		status := analyzer.AnalyzeAsyncWithConfig(cfg).Status()
-		recommendations := analyzer.GenerateRecommendations()
+
+		// Use enhanced recommendations with what-if deltas and top reasons (bv-83)
+		recommendations := analyzer.GenerateEnhancedRecommendations()
 
 		// Count high confidence recommendations
 		highConfidence := 0
@@ -671,22 +690,24 @@ func main() {
 
 		// Build output with summary
 		output := struct {
-			GeneratedAt     string                            `json:"generated_at"`
-			DataHash        string                            `json:"data_hash"`
-			AnalysisConfig  analysis.AnalysisConfig           `json:"analysis_config"`
-			Status          analysis.MetricStatus             `json:"status"`
-			Recommendations []analysis.PriorityRecommendation `json:"recommendations"`
-			Summary         struct {
+			GeneratedAt       string                                    `json:"generated_at"`
+			DataHash          string                                    `json:"data_hash"`
+			AnalysisConfig    analysis.AnalysisConfig                   `json:"analysis_config"`
+			Status            analysis.MetricStatus                     `json:"status"`
+			Recommendations   []analysis.EnhancedPriorityRecommendation `json:"recommendations"`
+			FieldDescriptions map[string]string                         `json:"field_descriptions"`
+			Summary           struct {
 				TotalIssues     int `json:"total_issues"`
 				Recommendations int `json:"recommendations"`
 				HighConfidence  int `json:"high_confidence"`
 			} `json:"summary"`
 		}{
-			GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
-			DataHash:        dataHash,
-			AnalysisConfig:  cfg,
-			Status:          status,
-			Recommendations: recommendations,
+			GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
+			DataHash:          dataHash,
+			AnalysisConfig:    cfg,
+			Status:            status,
+			Recommendations:   recommendations,
+			FieldDescriptions: analysis.DefaultFieldDescriptions(),
 		}
 		output.Summary.TotalIssues = len(issues)
 		output.Summary.Recommendations = len(recommendations)
@@ -937,6 +958,20 @@ func main() {
 		// Launch TUI with historical issues (no live reload for historical view)
 		m := ui.NewModel(historicalIssues, activeRecipe, "")
 		p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+		// Optional auto-quit for automated tests: set BV_TUI_AUTOCLOSE_MS
+		if v := os.Getenv("BV_TUI_AUTOCLOSE_MS"); v != "" {
+			if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+				go func() {
+					delay := time.Duration(ms) * time.Millisecond
+					time.Sleep(delay)
+					p.Send(tea.Quit)
+					// Failsafe: hard exit soon after to avoid hanging tests
+					time.Sleep(2 * time.Second)
+					os.Exit(0)
+				}()
+			}
+		}
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running beads viewer: %v\n", err)
 			os.Exit(1)
@@ -1022,6 +1057,20 @@ func main() {
 
 	// Run Program
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	// Optional auto-quit for automated tests: set BV_TUI_AUTOCLOSE_MS
+	if v := os.Getenv("BV_TUI_AUTOCLOSE_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			go func() {
+				delay := time.Duration(ms) * time.Millisecond
+				time.Sleep(delay)
+				p.Send(tea.Quit)
+				// Failsafe: hard exit soon after to avoid hanging tests
+				time.Sleep(2 * time.Second)
+				os.Exit(0)
+			}()
+		}
+	}
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running beads viewer: %v\n", err)
 		os.Exit(1)
