@@ -261,6 +261,175 @@ pub fn enumerate_cycles_with_info(graph: &DiGraph, max_cycles: usize) -> CycleEn
     }
 }
 
+// ============================================================================
+// Cycle Break Suggestions
+// ============================================================================
+
+/// A suggestion for which edge to remove to break cycles.
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleBreakItem {
+    /// Source node of the edge
+    pub from: usize,
+    /// Target node of the edge
+    pub to: usize,
+    /// Number of cycles this edge appears in
+    pub cycles_broken: usize,
+    /// Collateral damage score (sum of degree changes)
+    pub collateral: usize,
+    /// Node IDs for display
+    pub from_id: Option<String>,
+    /// Node ID for target
+    pub to_id: Option<String>,
+}
+
+/// Result of cycle break analysis.
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleBreakResult {
+    /// Suggested edges to remove
+    pub suggestions: Vec<CycleBreakItem>,
+    /// Total cycles in the graph
+    pub total_cycles: usize,
+    /// Whether cycle enumeration was truncated
+    pub truncated: bool,
+}
+
+/// Analyze cycles and suggest edges to remove to break them.
+///
+/// For each edge within an SCC (cycle-containing component), calculates:
+/// - How many cycles it participates in
+/// - The collateral damage (in-degree + out-degree of incident nodes)
+///
+/// Suggestions are sorted by: cycles_broken desc, then collateral asc
+/// (prefer edges that break many cycles with minimal disruption)
+///
+/// # Arguments
+/// * `graph` - The directed graph
+/// * `limit` - Maximum suggestions to return
+/// * `max_cycles_to_enumerate` - Max cycles to enumerate for scoring (default 100)
+pub fn cycle_break_suggestions(
+    graph: &DiGraph,
+    limit: usize,
+    max_cycles_to_enumerate: usize,
+) -> CycleBreakResult {
+    let scc = tarjan_scc(graph);
+    if !scc.has_cycles {
+        return CycleBreakResult {
+            suggestions: Vec::new(),
+            total_cycles: 0,
+            truncated: false,
+        };
+    }
+
+    // Enumerate actual cycles to count edge participation
+    let cycle_info = enumerate_cycles_with_info(graph, max_cycles_to_enumerate);
+    let cycles = &cycle_info.cycles;
+
+    // Build a map of edge -> cycles it appears in
+    let mut edge_cycle_count: std::collections::HashMap<(usize, usize), usize> =
+        std::collections::HashMap::new();
+
+    for cycle in cycles {
+        if cycle.len() < 2 {
+            continue;
+        }
+        // Count edges in this cycle
+        for i in 0..cycle.len() {
+            let from = cycle[i];
+            let to = cycle[(i + 1) % cycle.len()];
+            *edge_cycle_count.entry((from, to)).or_insert(0) += 1;
+        }
+    }
+
+    // Build set of nodes in non-trivial SCCs
+    let cycle_nodes: HashSet<usize> = scc
+        .components
+        .iter()
+        .filter(|c| c.len() > 1)
+        .flat_map(|c| c.iter().copied())
+        .collect();
+
+    // Find all edges within cycle SCCs
+    let mut suggestions: Vec<CycleBreakItem> = Vec::new();
+
+    for &from in &cycle_nodes {
+        for &to in graph.successors_slice(from) {
+            if cycle_nodes.contains(&to) {
+                let cycles_broken = edge_cycle_count.get(&(from, to)).copied().unwrap_or(0);
+                let collateral = graph.successors_slice(from).len() + graph.predecessors_slice(to).len();
+
+                suggestions.push(CycleBreakItem {
+                    from,
+                    to,
+                    cycles_broken,
+                    collateral,
+                    from_id: graph.node_id(from),
+                    to_id: graph.node_id(to),
+                });
+            }
+        }
+    }
+
+    // Sort by: cycles_broken desc, collateral asc
+    suggestions.sort_by(|a, b| {
+        match b.cycles_broken.cmp(&a.cycles_broken) {
+            std::cmp::Ordering::Equal => a.collateral.cmp(&b.collateral),
+            other => other,
+        }
+    });
+
+    suggestions.truncate(limit);
+
+    CycleBreakResult {
+        suggestions,
+        total_cycles: cycle_info.count,
+        truncated: cycle_info.truncated,
+    }
+}
+
+/// Quick check for edges that could break cycles.
+///
+/// A simplified version that only looks at SCC membership without
+/// full cycle enumeration. Faster but less precise scoring.
+pub fn quick_cycle_break_edges(graph: &DiGraph, limit: usize) -> Vec<CycleBreakItem> {
+    let scc = tarjan_scc(graph);
+    if !scc.has_cycles {
+        return Vec::new();
+    }
+
+    // Build set of nodes in non-trivial SCCs
+    let cycle_nodes: HashSet<usize> = scc
+        .components
+        .iter()
+        .filter(|c| c.len() > 1)
+        .flat_map(|c| c.iter().copied())
+        .collect();
+
+    let mut suggestions: Vec<CycleBreakItem> = Vec::new();
+
+    for &from in &cycle_nodes {
+        for &to in graph.successors_slice(from) {
+            if cycle_nodes.contains(&to) {
+                // Heuristic: edges with low total degree are better to remove
+                let collateral = graph.successors_slice(from).len() + graph.predecessors_slice(to).len();
+
+                suggestions.push(CycleBreakItem {
+                    from,
+                    to,
+                    cycles_broken: 1, // Unknown without enumeration
+                    collateral,
+                    from_id: graph.node_id(from),
+                    to_id: graph.node_id(to),
+                });
+            }
+        }
+    }
+
+    // Sort by collateral (prefer low-impact edges)
+    suggestions.sort_by_key(|s| s.collateral);
+    suggestions.truncate(limit);
+    suggestions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,5 +672,207 @@ mod tests {
 
         let cycles = enumerate_cycles(&graph, 100);
         assert!(cycles.len() >= 2);
+    }
+
+    // ========================================================================
+    // Cycle Break Suggestion Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cycle_break_dag() {
+        // a -> b -> c (no cycles)
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        let c = graph.add_node("c");
+        graph.add_edge(a, b);
+        graph.add_edge(b, c);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert!(result.suggestions.is_empty());
+        assert_eq!(result.total_cycles, 0);
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn test_cycle_break_simple() {
+        // a -> b -> a
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        graph.add_edge(a, b);
+        graph.add_edge(b, a);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert_eq!(result.total_cycles, 1);
+        assert_eq!(result.suggestions.len(), 2); // Both edges are candidates
+
+        // Both edges participate in 1 cycle
+        for s in &result.suggestions {
+            assert_eq!(s.cycles_broken, 1);
+        }
+    }
+
+    #[test]
+    fn test_cycle_break_triangle() {
+        // a -> b -> c -> a
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        let c = graph.add_node("c");
+        graph.add_edge(a, b);
+        graph.add_edge(b, c);
+        graph.add_edge(c, a);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert_eq!(result.total_cycles, 1);
+        assert_eq!(result.suggestions.len(), 3); // 3 edges in cycle
+
+        // All edges participate in 1 cycle
+        for s in &result.suggestions {
+            assert_eq!(s.cycles_broken, 1);
+        }
+    }
+
+    #[test]
+    fn test_cycle_break_shared_edge() {
+        //     a
+        //    / \
+        //   b   c
+        //    \ /
+        //     d -> a (creates two cycles sharing d->a)
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        let c = graph.add_node("c");
+        let d = graph.add_node("d");
+        graph.add_edge(a, b);
+        graph.add_edge(a, c);
+        graph.add_edge(b, d);
+        graph.add_edge(c, d);
+        graph.add_edge(d, a); // Shared back edge
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert_eq!(result.total_cycles, 2);
+
+        // d->a should be ranked first (breaks 2 cycles)
+        let best = &result.suggestions[0];
+        assert_eq!(best.from, d);
+        assert_eq!(best.to, a);
+        assert_eq!(best.cycles_broken, 2);
+    }
+
+    #[test]
+    fn test_cycle_break_includes_ids() {
+        // a -> b -> a
+        let mut graph = DiGraph::new();
+        graph.add_node("issue-1");
+        graph.add_node("issue-2");
+        graph.add_edge(0, 1);
+        graph.add_edge(1, 0);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert!(!result.suggestions.is_empty());
+
+        let s = &result.suggestions[0];
+        assert!(s.from_id.is_some());
+        assert!(s.to_id.is_some());
+    }
+
+    #[test]
+    fn test_cycle_break_limit() {
+        // Many edges in cycle
+        let mut graph = DiGraph::new();
+        for i in 0..10 {
+            graph.add_node(&format!("n{}", i));
+        }
+        // Create a 10-node cycle
+        for i in 0..10 {
+            graph.add_edge(i, (i + 1) % 10);
+        }
+
+        let result = cycle_break_suggestions(&graph, 3, 100);
+        assert_eq!(result.suggestions.len(), 3); // Limited to 3
+    }
+
+    #[test]
+    fn test_quick_cycle_break() {
+        // a -> b -> a
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        graph.add_edge(a, b);
+        graph.add_edge(b, a);
+
+        let suggestions = quick_cycle_break_edges(&graph, 10);
+        assert_eq!(suggestions.len(), 2);
+
+        // Sorted by collateral
+        for s in &suggestions {
+            assert_eq!(s.cycles_broken, 1); // Heuristic value
+        }
+    }
+
+    #[test]
+    fn test_quick_cycle_break_dag() {
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        graph.add_edge(a, b);
+
+        let suggestions = quick_cycle_break_edges(&graph, 10);
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_cycle_break_disconnected_cycles() {
+        // Two separate cycles
+        // Cycle 1: a -> b -> a
+        // Cycle 2: c -> d -> c
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        let c = graph.add_node("c");
+        let d = graph.add_node("d");
+        graph.add_edge(a, b);
+        graph.add_edge(b, a);
+        graph.add_edge(c, d);
+        graph.add_edge(d, c);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        assert_eq!(result.total_cycles, 2);
+        assert_eq!(result.suggestions.len(), 4); // 2 edges per cycle
+    }
+
+    #[test]
+    fn test_cycle_break_collateral_ordering() {
+        // a -> b -> a  (small cycle)
+        // a -> c -> d -> a (larger cycle through same node)
+        let mut graph = DiGraph::new();
+        let a = graph.add_node("a");
+        let b = graph.add_node("b");
+        let c = graph.add_node("c");
+        let d = graph.add_node("d");
+        graph.add_edge(a, b);
+        graph.add_edge(b, a);
+        graph.add_edge(a, c);
+        graph.add_edge(c, d);
+        graph.add_edge(d, a);
+
+        let result = cycle_break_suggestions(&graph, 10, 100);
+        // Should have suggestions sorted by cycles_broken desc, then collateral asc
+        // Check that suggestions are not empty
+        assert!(!result.suggestions.is_empty());
+
+        // Verify ordering: if same cycles_broken, lower collateral first
+        for i in 1..result.suggestions.len() {
+            let prev = &result.suggestions[i - 1];
+            let curr = &result.suggestions[i];
+            if prev.cycles_broken == curr.cycles_broken {
+                assert!(prev.collateral <= curr.collateral);
+            } else {
+                assert!(prev.cycles_broken >= curr.cycles_broken);
+            }
+        }
     }
 }

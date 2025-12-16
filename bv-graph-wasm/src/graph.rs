@@ -385,6 +385,26 @@ impl DiGraph {
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
+    /// Suggest edges to remove to break cycles.
+    /// Returns JSON: { suggestions: [{from, to, cycles_broken, collateral, from_id, to_id}], total_cycles, truncated }
+    /// Suggestions are sorted by cycles_broken desc, then collateral asc.
+    #[wasm_bindgen(js_name = cycleBreakSuggestions)]
+    pub fn cycle_break_suggestions(&self, limit: usize, max_cycles_to_enumerate: usize) -> JsValue {
+        use crate::algorithms::cycles::cycle_break_suggestions;
+        let result = cycle_break_suggestions(self, limit, max_cycles_to_enumerate);
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
+
+    /// Quick cycle break suggestions (faster, less precise).
+    /// Only uses SCC membership without full cycle enumeration.
+    /// Returns JSON array of { from, to, collateral, from_id, to_id }.
+    #[wasm_bindgen(js_name = quickCycleBreakEdges)]
+    pub fn quick_cycle_break_edges(&self, limit: usize) -> JsValue {
+        use crate::algorithms::cycles::quick_cycle_break_edges;
+        let result = quick_cycle_break_edges(self, limit);
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
+
     /// Compute slack for each node in the DAG.
     /// Slack = critical_path_length - longest_path_through_node.
     /// Zero slack means the node is on the critical path.
