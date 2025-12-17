@@ -3,6 +3,7 @@ package ui_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"runtime"
 	"testing"
 
@@ -81,7 +82,7 @@ func prepareGraphBench(levels, perLevel int) ([]model.Issue, *analysis.Insights,
 	stats.WaitForPhase2()
 	insights := stats.GenerateInsights(len(issues))
 
-	theme := ui.DefaultTheme(lipgloss.NewRenderer(nil))
+	theme := ui.DefaultTheme(lipgloss.NewRenderer(io.Discard))
 	return issues, &insights, theme
 }
 

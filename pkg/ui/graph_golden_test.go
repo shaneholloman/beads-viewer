@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -103,7 +104,11 @@ func TestGraphView_GoldenASCII(t *testing.T) {
 			stats := analyzer.AnalyzeWithConfig(analysis.FullAnalysisConfig())
 			insights := (&stats).GenerateInsights(len(issues))
 
-			theme := DefaultTheme(lipgloss.NewRenderer(nil))
+			// Use deterministic renderer with forced settings
+			renderer := lipgloss.NewRenderer(io.Discard)
+			renderer.SetHasDarkBackground(true) // Force dark mode for consistency
+			theme := DefaultTheme(renderer)
+			
 			g := NewGraphModel(issues, &insights, theme)
 			selectGraphID(t, &g, tc.selectedID)
 
