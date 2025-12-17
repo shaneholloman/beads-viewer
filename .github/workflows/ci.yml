@@ -66,6 +66,17 @@ jobs:
         name: coverage-report
         path: coverage.html
 
+    - name: Upload to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: coverage.out
+        flags: unittests
+        name: codecov-coverage
+        fail_ci_if_error: false
+        verbose: true
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
     - name: Run Quick Benchmarks
       run: |
         echo "Running critical benchmarks to catch performance regressions..."

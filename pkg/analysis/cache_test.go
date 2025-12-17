@@ -226,7 +226,7 @@ func TestCachedAnalyzer_CacheHit(t *testing.T) {
 
 	// First analysis - cache miss
 	ca1 := analysis.NewCachedAnalyzer(issues, cache)
-	stats1 := ca1.AnalyzeAsync()
+	stats1 := ca1.AnalyzeAsync(context.Background())
 	stats1.WaitForPhase2()
 
 	if ca1.WasCacheHit() {
@@ -238,7 +238,7 @@ func TestCachedAnalyzer_CacheHit(t *testing.T) {
 
 	// Second analysis - should hit cache
 	ca2 := analysis.NewCachedAnalyzer(issues, cache)
-	stats2 := ca2.AnalyzeAsync()
+	stats2 := ca2.AnalyzeAsync(context.Background())
 
 	if !ca2.WasCacheHit() {
 		t.Error("Second analysis should be a cache hit")
@@ -257,7 +257,7 @@ func TestCachedAnalyzer_CacheMiss_DifferentData(t *testing.T) {
 
 	// First analysis
 	ca1 := analysis.NewCachedAnalyzer(issues1, cache)
-	stats1 := ca1.AnalyzeAsync()
+	stats1 := ca1.AnalyzeAsync(context.Background())
 	stats1.WaitForPhase2()
 
 	// Wait for cache
@@ -265,7 +265,7 @@ func TestCachedAnalyzer_CacheMiss_DifferentData(t *testing.T) {
 
 	// Different data - should miss
 	ca2 := analysis.NewCachedAnalyzer(issues2, cache)
-	stats2 := ca2.AnalyzeAsync()
+	stats2 := ca2.AnalyzeAsync(context.Background())
 
 	if ca2.WasCacheHit() {
 		t.Error("Different data should be a cache miss")
