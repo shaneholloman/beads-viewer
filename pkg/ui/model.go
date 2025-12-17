@@ -2660,10 +2660,14 @@ func (m *Model) renderHelpOverlay() string {
 		{"g", "Toggle Graph view"},
 		{"H", "Toggle History view"},
 		{"i", "Toggle Insights dashboard"},
+		{"L", "Toggle Label dashboard"},
+		{"A", "Toggle Attention view"},
+		{"F", "Toggle Flow matrix"},
 		{"P", "Toggle Sprint dashboard"},
 		{"R", "Open Recipe picker"},
 		{"w", "Repo filter (workspace mode)"},
-		{"?", "Toggle this help"},
+		{"? / F1", "Toggle this help"},
+		{"F2", "Toggle shortcuts sidebar"},
 	}
 	for _, s := range views {
 		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
@@ -2724,12 +2728,28 @@ func (m *Model) renderHelpOverlay() string {
 		{"c", "Show Closed issues"},
 		{"r", "Show Ready (unblocked)"},
 		{"a", "Show All issues"},
+		{"l", "Filter by label"},
 		{"s", "Cycle sort mode"},
 		{"S", "Apply triage sort"},
 		{"/", "Fuzzy search"},
-		{"Ctrl+S", "Toggle semantic search mode"},
+		{"Ctrl+S", "Toggle semantic search"},
 	}
 	for _, s := range filters {
+		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
+	}
+
+	// Label Dashboard keys
+	sb.WriteString("\n")
+	sb.WriteString(sectionStyle.Render("Label Dashboard"))
+	sb.WriteString("\n")
+	labelKeys := []struct{ key, desc string }{
+		{"j/k", "Navigate labels"},
+		{"h", "Show health details"},
+		{"d", "Drilldown to issues"},
+		{"Enter", "Filter main list"},
+		{"Esc/q", "Close dashboard"},
+	}
+	for _, s := range labelKeys {
 		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
 	}
 
@@ -2738,7 +2758,9 @@ func (m *Model) renderHelpOverlay() string {
 	sb.WriteString(sectionStyle.Render("General"))
 	sb.WriteString("\n")
 	general := []struct{ key, desc string }{
-		{"t", "Time-travel (custom revision)"},
+		{"p", "Toggle priority hints"},
+		{"!", "Toggle alerts panel"},
+		{"t", "Time-travel (custom)"},
 		{"T", "Time-travel (HEAD~5)"},
 		{"E", "Export to Markdown"},
 		{"C", "Copy issue to clipboard"},
