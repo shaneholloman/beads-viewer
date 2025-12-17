@@ -909,7 +909,7 @@ func TestHelpOverlayScroll(t *testing.T) {
 		t.Fatalf("expected showHelp=false after x")
 	}
 
-	// Test render with scroll indicator (small terminal)
+	// Test render help overlay
 	m.showHelp = true
 	m.focused = focusHelp
 	m.helpScroll = 0
@@ -917,8 +917,8 @@ func TestHelpOverlayScroll(t *testing.T) {
 	if !strings.Contains(out, "Keyboard Shortcuts") {
 		t.Fatalf("help overlay should render shortcuts")
 	}
-	// On small terminal, should show scroll indicator
-	if !strings.Contains(out, "scroll") && !strings.Contains(out, "↑↓") {
-		t.Fatalf("help overlay should show scroll hint on small terminal")
+	// Should show close hint
+	if !strings.Contains(out, "close") && !strings.Contains(out, "Esc") {
+		t.Fatalf("help overlay should show close hint")
 	}
 }

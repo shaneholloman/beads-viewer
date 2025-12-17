@@ -2609,237 +2609,209 @@ func (m Model) renderSplitView() string {
 func (m *Model) renderHelpOverlay() string {
 	t := m.theme
 
-	titleStyle := t.Renderer.NewStyle().
-		Foreground(t.Primary).
-		Bold(true).
-		MarginBottom(1)
+	// Determine layout based on terminal width
+	// 3 columns for wide (≥120), 2 columns for medium (≥80), 1 column for narrow
+	numCols := 3
+	if m.width < 120 {
+		numCols = 2
+	}
+	if m.width < 80 {
+		numCols = 1
+	}
 
-	sectionStyle := t.Renderer.NewStyle().
-		Foreground(t.Secondary).
-		Bold(true).
-		MarginTop(1)
+	// Calculate column width (accounting for gaps and outer padding)
+	totalPadding := 8 // outer padding
+	gapWidth := 2     // gap between columns
+	availableWidth := m.width - totalPadding - (gapWidth * (numCols - 1))
+	colWidth := availableWidth / numCols
+	if colWidth < 28 {
+		colWidth = 28
+	}
 
-	keyStyle := t.Renderer.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#7D56F4", Dark: "#BD93F9"}).
-		Bold(true).
-		Width(12)
+	// Define color palette (Dracula-inspired gradient)
+	colors := []lipgloss.AdaptiveColor{
+		{Light: "#7D56F4", Dark: "#BD93F9"}, // Purple
+		{Light: "#FF79C6", Dark: "#FF79C6"}, // Pink
+		{Light: "#8BE9FD", Dark: "#8BE9FD"}, // Cyan
+		{Light: "#50FA7B", Dark: "#50FA7B"}, // Green
+		{Light: "#FFB86C", Dark: "#FFB86C"}, // Orange
+		{Light: "#F1FA8C", Dark: "#F1FA8C"}, // Yellow
+	}
 
-	descStyle := t.Renderer.NewStyle().
-		Foreground(t.Base.GetForeground())
+	// Helper to render a section panel
+	renderPanel := func(title string, icon string, colorIdx int, shortcuts []struct{ key, desc string }) string {
+		color := colors[colorIdx%len(colors)]
 
-	var sb strings.Builder
+		headerStyle := t.Renderer.NewStyle().
+			Foreground(color).
+			Bold(true).
+			BorderStyle(lipgloss.Border{Bottom: "─"}).
+			BorderBottom(true).
+			BorderForeground(color).
+			Width(colWidth - 4).
+			Padding(0, 1)
 
-	sb.WriteString(titleStyle.Render("⌨️  Keyboard Shortcuts"))
-	sb.WriteString("\n\n")
+		keyStyle := t.Renderer.NewStyle().
+			Foreground(color).
+			Bold(true).
+			Width(10)
 
-	// Navigation
-	sb.WriteString(sectionStyle.Render("Navigation"))
-	sb.WriteString("\n")
-	shortcuts := []struct{ key, desc string }{
+		descStyle := t.Renderer.NewStyle().
+			Foreground(t.Base.GetForeground()).
+			Width(colWidth - 16)
+
+		var content strings.Builder
+		content.WriteString(headerStyle.Render(icon + " " + title))
+		content.WriteString("\n")
+
+		for _, s := range shortcuts {
+			content.WriteString(keyStyle.Render(s.key))
+			content.WriteString(descStyle.Render(s.desc))
+			content.WriteString("\n")
+		}
+
+		panelStyle := t.Renderer.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(color).
+			Padding(0, 1).
+			Width(colWidth)
+
+		return panelStyle.Render(content.String())
+	}
+
+	// Define all sections
+	navSection := []struct{ key, desc string }{
 		{"j / ↓", "Move down"},
 		{"k / ↑", "Move up"},
-		{"home", "Go to first item"},
-		{"G / end", "Go to last item"},
+		{"G/end", "Go to last"},
 		{"Ctrl+d", "Page down"},
 		{"Ctrl+u", "Page up"},
-		{"Tab", "Switch focus (split view)"},
+		{"Tab", "Switch focus"},
 		{"Enter", "View details"},
 		{"Esc", "Back / close"},
 	}
-	for _, s := range shortcuts {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
 
-	// Views
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("Views"))
-	sb.WriteString("\n")
-	views := []struct{ key, desc string }{
-		{"a", "Toggle Actionable view"},
-		{"b", "Toggle Kanban board"},
-		{"g", "Toggle Graph view"},
-		{"h", "Toggle History view"},
-		{"i", "Toggle Insights dashboard"},
-		{"f", "Toggle Flow matrix"},
+	viewsSection := []struct{ key, desc string }{
+		{"b", "Kanban board"},
+		{"g", "Graph view"},
+		{"i", "Insights"},
+		{"h", "History view"},
+		{"a", "Actionable"},
+		{"f", "Flow matrix"},
 		{"[", "Label dashboard"},
 		{"]", "Attention view"},
-		{"'", "Recipe picker"},
-		{"w", "Repo filter (workspace mode)"},
-		{"?", "Toggle this help"},
-		{";", "Toggle shortcuts sidebar"},
-	}
-	for _, s := range views {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
 	}
 
-	// Graph view keys
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("Graph View"))
-	sb.WriteString("\n")
-	graphKeys := []struct{ key, desc string }{
-		{"hjkl", "Navigate nodes"},
-		{"H/L", "Scroll canvas left/right"},
-		{"PgUp/PgDn", "Scroll canvas up/down"},
-		{"Enter", "Jump to selected issue"},
-	}
-	for _, s := range graphKeys {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
-
-	// Insights (when in insights view)
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("Insights Panel"))
-	sb.WriteString("\n")
-	insightsKeys := []struct{ key, desc string }{
-		{"h/l/Tab", "Switch metric panels"},
-		{"j/k", "Navigate items"},
-		{"e", "Toggle explanations"},
-		{"x", "Toggle calculation details"},
-		{"Enter", "Jump to issue"},
-	}
-	for _, s := range insightsKeys {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
-
-	// History View keys
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("History View"))
-	sb.WriteString("\n")
-	historyKeys := []struct{ key, desc string }{
-		{"j/k", "Navigate bead list"},
-		{"J/K", "Navigate commits in bead"},
-		{"Tab", "Toggle list/detail focus"},
-		{"Enter", "Jump to selected bead"},
-		{"y", "Copy commit SHA"},
-		{"c", "Cycle confidence filter"},
-		{"h/Esc", "Close history view"},
-	}
-	for _, s := range historyKeys {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
-
-	// Filters & Sort
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("Filters & Sort"))
-	sb.WriteString("\n")
-	filters := []struct{ key, desc string }{
-		{"o", "Show Open issues"},
-		{"c", "Show Closed issues"},
-		{"r", "Show Ready (unblocked)"},
-		{"a", "Show All issues"},
-		{"l", "Filter by label"},
-		{"s", "Cycle sort mode"},
-		{"S", "Apply triage sort"},
-		{"/", "Fuzzy search"},
-		{"Ctrl+S", "Toggle semantic search"},
-	}
-	for _, s := range filters {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
-
-	// Label Dashboard keys
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("Label Dashboard"))
-	sb.WriteString("\n")
-	labelKeys := []struct{ key, desc string }{
-		{"j/k", "Navigate labels"},
-		{"h", "Show health details"},
-		{"d", "Drilldown to issues"},
-		{"Enter", "Filter main list"},
-		{"Esc/q", "Close dashboard"},
-	}
-	for _, s := range labelKeys {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
-	}
-
-	// General
-	sb.WriteString("\n")
-	sb.WriteString(sectionStyle.Render("General"))
-	sb.WriteString("\n")
-	general := []struct{ key, desc string }{
-		{"p", "Toggle priority hints"},
-		{"!", "Toggle alerts panel"},
-		{"t", "Time-travel (custom)"},
-		{"T", "Time-travel (HEAD~5)"},
-		{"x", "Export to Markdown"},
-		{"C", "Copy issue to clipboard"},
-		{"O", "Open in editor"},
+	globalSection := []struct{ key, desc string }{
+		{"?", "This help"},
+		{";", "Shortcuts bar"},
+		{"!", "Alerts panel"},
+		{"'", "Recipes"},
+		{"w", "Repo picker"},
 		{"q", "Back / Quit"},
 		{"Ctrl+c", "Force quit"},
 	}
-	for _, s := range general {
-		sb.WriteString(keyStyle.Render(s.key) + descStyle.Render(s.desc) + "\n")
+
+	filterSection := []struct{ key, desc string }{
+		{"/", "Fuzzy search"},
+		{"Ctrl+S", "Semantic search"},
+		{"o", "Open issues"},
+		{"c", "Closed issues"},
+		{"r", "Ready (unblocked)"},
+		{"l", "Filter by label"},
+		{"s", "Cycle sort"},
+		{"S", "Triage sort"},
 	}
 
-	// Build full content (without footer yet)
-	fullContent := sb.String()
-	lines := strings.Split(fullContent, "\n")
-	totalLines := len(lines)
-
-	// Calculate available height for content
-	// Reserve space for border (2), padding (2), and footer (2)
-	availableHeight := m.height - 8
-	if availableHeight < 5 {
-		availableHeight = 5
+	graphSection := []struct{ key, desc string }{
+		{"hjkl", "Navigate nodes"},
+		{"H/L", "Scroll left/right"},
+		{"PgUp/Dn", "Scroll up/down"},
+		{"Enter", "Jump to issue"},
 	}
 
-	// Clamp scroll position
-	maxScroll := totalLines - availableHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.helpScroll > maxScroll {
-		m.helpScroll = maxScroll
-	}
-	if m.helpScroll < 0 {
-		m.helpScroll = 0
+	insightsSection := []struct{ key, desc string }{
+		{"h/l/Tab", "Switch panels"},
+		{"j/k", "Navigate items"},
+		{"e", "Explanations"},
+		{"x", "Calc details"},
+		{"Enter", "Jump to issue"},
 	}
 
-	// Extract visible lines
-	startLine := m.helpScroll
-	endLine := startLine + availableHeight
-	if endLine > totalLines {
-		endLine = totalLines
+	historySection := []struct{ key, desc string }{
+		{"j/k", "Navigate beads"},
+		{"J/K", "Navigate commits"},
+		{"Tab", "Toggle focus"},
+		{"y", "Copy SHA"},
+		{"c", "Confidence filter"},
 	}
-	visibleLines := lines[startLine:endLine]
-	visibleContent := strings.Join(visibleLines, "\n")
 
-	// Build scroll indicator
-	var scrollIndicator string
-	if totalLines > availableHeight {
-		// Show scroll position as a bar
-		scrollPercent := 0
-		if maxScroll > 0 {
-			scrollPercent = m.helpScroll * 100 / maxScroll
+	actionsSection := []struct{ key, desc string }{
+		{"p", "Priority hints"},
+		{"t", "Time-travel"},
+		{"T", "Quick time-travel"},
+		{"x", "Export markdown"},
+		{"C", "Copy to clipboard"},
+		{"O", "Open in editor"},
+	}
+
+	// Build panels
+	panels := []string{
+		renderPanel("Navigation", "🧭", 0, navSection),
+		renderPanel("Views", "👁", 1, viewsSection),
+		renderPanel("Global", "🌐", 2, globalSection),
+		renderPanel("Filters & Sort", "🔍", 3, filterSection),
+		renderPanel("Graph View", "📊", 4, graphSection),
+		renderPanel("Insights", "💡", 5, insightsSection),
+		renderPanel("History", "📜", 0, historySection),
+		renderPanel("Actions", "⚡", 1, actionsSection),
+	}
+
+	// Arrange panels into columns
+	var columns []string
+	panelsPerCol := (len(panels) + numCols - 1) / numCols
+
+	for col := 0; col < numCols; col++ {
+		start := col * panelsPerCol
+		end := start + panelsPerCol
+		if end > len(panels) {
+			end = len(panels)
 		}
-		// Create a simple indicator: [===---] style
-		barWidth := 10
-		filledWidth := barWidth * scrollPercent / 100
-		if filledWidth > barWidth {
-			filledWidth = barWidth
+		if start >= len(panels) {
+			break
 		}
-		scrollBar := strings.Repeat("─", filledWidth) + "●" + strings.Repeat("─", barWidth-filledWidth)
-		scrollIndicator = fmt.Sprintf(" [%s] %d/%d", scrollBar, m.helpScroll+1, maxScroll+1)
+
+		colPanels := panels[start:end]
+		columns = append(columns, lipgloss.JoinVertical(lipgloss.Left, colPanels...))
 	}
 
-	// Build footer with navigation hint
-	footerStyle := t.Renderer.NewStyle().Foreground(t.Secondary).Italic(true)
-	var footer string
-	if totalLines > availableHeight {
-		footer = footerStyle.Render(fmt.Sprintf("↑↓ scroll │ q close%s", scrollIndicator))
-	} else {
-		footer = footerStyle.Render("Press any key to close")
-	}
+	// Join columns horizontally
+	body := lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 
-	// Combine content and footer
-	helpContent := visibleContent + "\n\n" + footer
+	// Title bar
+	titleStyle := t.Renderer.NewStyle().
+		Foreground(t.Primary).
+		Bold(true).
+		Padding(0, 2)
 
-	// Center the help content
-	helpBox := t.Renderer.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+	subtitleStyle := t.Renderer.NewStyle().
+		Foreground(t.Secondary).
+		Italic(true)
+
+	title := titleStyle.Render("⌨️  Keyboard Shortcuts")
+	subtitle := subtitleStyle.Render("Press ? or Esc to close")
+	titleBar := lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", subtitle)
+
+	// Combine title and body
+	content := lipgloss.JoinVertical(lipgloss.Center, titleBar, "", body)
+
+	// Outer container
+	containerStyle := t.Renderer.NewStyle().
+		Border(lipgloss.DoubleBorder()).
 		BorderForeground(t.Primary).
-		Padding(1, 3).
-		Render(helpContent)
+		Padding(1, 2)
+
+	helpBox := containerStyle.Render(content)
 
 	// Center in viewport
 	return lipgloss.Place(
