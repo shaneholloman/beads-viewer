@@ -459,3 +459,399 @@ func TestNeedsUpdateLegacy(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// Edge Case Tests for bv-efrq: Legacy Blurb Migration
+// ============================================================================
+
+// TestContainsLegacyBlurbEdgeCases tests boundary conditions for legacy detection.
+func TestContainsLegacyBlurbEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name: "only 2 of 4 patterns (header + one flag)",
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+Some description that mentions --robot-insights but nothing else.
+`,
+			expected: false,
+		},
+		{
+			name: "3 of 4 patterns (missing key differentiator)",
+			// Has: header, --robot-insights, --robot-plan
+			// Missing: "bv already computes the hard parts"
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+Use these flags:
+- --robot-insights for analysis
+- --robot-plan for planning
+`,
+			expected: false,
+		},
+		{
+			name: "documentation about flags (like this project's AGENTS.md)",
+			// Content similar to what appears in bv's own AGENTS.md
+			// Has 3 patterns but NOT "bv already computes the hard parts"
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+bv is a graph-aware triage engine for Beads projects.
+
+**Available robot flags**:
+| Command | Returns |
+|---------|---------|
+| --robot-insights | Full metrics: PageRank, betweenness, HITS |
+| --robot-plan | Parallel execution tracks |
+
+Use bv instead of parsing beads.jsonl—it computes PageRank deterministically.
+`,
+			expected: false,
+		},
+		{
+			name: "patterns without start header",
+			// Has all the patterns but not the "### Using bv as an AI sidecar" header
+			content: `# AGENTS.md
+
+## Some Other Section
+
+Mentions --robot-insights and --robot-plan.
+bv already computes the hard parts for you.
+`,
+			expected: false,
+		},
+		{
+			name: "header with ## instead of ### (not legacy)",
+			// LegacyBlurbPatterns[0] requires exactly "### Using bv as an AI sidecar" (3 #)
+			// while legacyBlurbStartPattern regex allows 2-3 #, the string match requires 3 #
+			content: `# AGENTS.md
+
+## Using bv as an AI sidecar
+
+Some description.
+- --robot-insights
+- --robot-plan
+
+bv already computes the hard parts for you.
+`,
+			expected: false, // Pattern match requires exact "### Using..." string
+		},
+		{
+			name: "all 4 patterns present (true positive)",
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+Full legacy blurb with:
+- --robot-insights
+- --robot-plan
+bv already computes the hard parts for you.
+`,
+			expected: true,
+		},
+		{
+			name: "patterns scattered across unrelated sections",
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+Intro only.
+
+## Section About Search
+
+Use --robot-insights for search results.
+
+## Section About Planning
+
+Use --robot-plan to get plans.
+
+## Footer
+
+Note: bv already computes the hard parts - use it!
+`,
+			expected: true, // All patterns are present, even if scattered
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ContainsLegacyBlurb(tt.content)
+			if result != tt.expected {
+				t.Errorf("ContainsLegacyBlurb() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestRemoveLegacyBlurbEdgeCases tests boundary conditions for legacy removal.
+func TestRemoveLegacyBlurbEdgeCases(t *testing.T) {
+	tests := []struct {
+		name            string
+		content         string
+		expectRemoved   []string // strings that should NOT be in result
+		expectPreserved []string // strings that should be in result
+	}{
+		{
+			name: "legacy blurb at file start",
+			content: `### Using bv as an AI sidecar
+
+Some description.
+--robot-insights
+--robot-plan
+bv already computes the hard parts for you.
+
+## Real Content
+
+This should be preserved.
+`,
+			expectRemoved:   []string{"### Using bv as an AI sidecar", "--robot-insights"},
+			expectPreserved: []string{"## Real Content", "This should be preserved"},
+		},
+		{
+			name: "legacy blurb at file end (no trailing content)",
+			content: `# AGENTS.md
+
+Some intro content.
+
+### Using bv as an AI sidecar
+
+Description.
+--robot-insights
+--robot-plan
+bv already computes the hard parts for you.
+`,
+			expectRemoved:   []string{"### Using bv as an AI sidecar", "--robot-insights"},
+			expectPreserved: []string{"# AGENTS.md", "Some intro content"},
+		},
+		{
+			name: "legacy blurb with CRLF line endings",
+			content: "# AGENTS.md\r\n\r\n### Using bv as an AI sidecar\r\n\r\n" +
+				"Description.\r\n--robot-insights\r\n--robot-plan\r\n" +
+				"bv already computes the hard parts for you.\r\n\r\n" +
+				"## Next Section\r\n",
+			expectRemoved:   []string{"### Using bv as an AI sidecar", "--robot-insights"},
+			expectPreserved: []string{"# AGENTS.md", "## Next Section"},
+		},
+		{
+			name: "legacy blurb with mixed LF and CRLF",
+			content: "# AGENTS.md\n\n### Using bv as an AI sidecar\r\n\n" +
+				"Description.\n--robot-insights\r\n--robot-plan\n" +
+				"bv already computes the hard parts for you.\n\n" +
+				"## Next Section\n",
+			expectRemoved:   []string{"### Using bv as an AI sidecar", "--robot-insights"},
+			expectPreserved: []string{"# AGENTS.md", "## Next Section"},
+		},
+		{
+			name: "legacy blurb only content in file",
+			content: `### Using bv as an AI sidecar
+
+--robot-insights
+--robot-plan
+bv already computes the hard parts for you.
+`,
+			expectRemoved:   []string{"### Using bv as an AI sidecar"},
+			expectPreserved: []string{}, // file should be nearly empty
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RemoveLegacyBlurb(tt.content)
+
+			for _, s := range tt.expectRemoved {
+				if strings.Contains(result, s) {
+					t.Errorf("RemoveLegacyBlurb() result still contains %q", s)
+				}
+			}
+
+			for _, s := range tt.expectPreserved {
+				if !strings.Contains(result, s) {
+					t.Errorf("RemoveLegacyBlurb() result missing expected content %q", s)
+				}
+			}
+		})
+	}
+}
+
+// TestGetBlurbVersionEdgeCases tests boundary conditions for version extraction.
+func TestGetBlurbVersionEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected int
+	}{
+		{
+			name:     "v0 marker",
+			content:  "<!-- bv-agent-instructions-v0 -->",
+			expected: 0, // v0 parses to 0
+		},
+		{
+			name:     "v99 high version",
+			content:  "<!-- bv-agent-instructions-v99 -->",
+			expected: 99,
+		},
+		{
+			name:     "v999 very high version",
+			content:  "<!-- bv-agent-instructions-v999 -->",
+			expected: 999,
+		},
+		{
+			name:     "malformed non-numeric version",
+			content:  "<!-- bv-agent-instructions-vX -->",
+			expected: 0,
+		},
+		{
+			name:     "malformed version with letters",
+			content:  "<!-- bv-agent-instructions-v1a -->",
+			expected: 0, // \d+ won't match "1a"
+		},
+		{
+			name:     "multiple version markers returns first",
+			content:  "<!-- bv-agent-instructions-v3 -->\nsome content\n<!-- bv-agent-instructions-v5 -->",
+			expected: 3, // FindStringSubmatch returns first match
+		},
+		{
+			name:     "version marker in middle of content",
+			content:  "# Header\n\nSome text before\n\n<!-- bv-agent-instructions-v7 -->\n\nContent after",
+			expected: 7,
+		},
+		{
+			name:     "version marker with extra spaces (no match)",
+			content:  "<!-- bv-agent-instructions-v 1 -->",
+			expected: 0, // regex requires no space before digits
+		},
+		{
+			name:     "partial marker (missing closing)",
+			content:  "<!-- bv-agent-instructions-v1",
+			expected: 0, // regex requires " -->"
+		},
+		{
+			name:     "negative-looking version (just digits)",
+			content:  "<!-- bv-agent-instructions-v-1 -->",
+			expected: 0, // \d+ doesn't match "-1"
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetBlurbVersion(tt.content)
+			if result != tt.expected {
+				t.Errorf("GetBlurbVersion() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestRemoveBlurbEdgeCases tests boundary conditions for current blurb removal.
+func TestRemoveBlurbEdgeCases(t *testing.T) {
+	tests := []struct {
+		name            string
+		content         string
+		expectPreserved []string
+	}{
+		{
+			name: "blurb at very start of file",
+			content: `<!-- bv-agent-instructions-v1 -->
+Content
+<!-- end-bv-agent-instructions -->
+
+## Real Section
+`,
+			expectPreserved: []string{"## Real Section"},
+		},
+		{
+			name: "blurb with CRLF line endings",
+			content: "# Header\r\n\r\n<!-- bv-agent-instructions-v1 -->\r\n" +
+				"Content\r\n<!-- end-bv-agent-instructions -->\r\n\r\n## Footer\r\n",
+			expectPreserved: []string{"# Header", "## Footer"},
+		},
+		{
+			name: "blurb only content in file",
+			content: `<!-- bv-agent-instructions-v1 -->
+Content
+<!-- end-bv-agent-instructions -->
+`,
+			expectPreserved: []string{}, // should be empty or nearly empty
+		},
+		{
+			name:            "missing end marker",
+			content:         "# Header\n\n<!-- bv-agent-instructions-v1 -->\nContent without end",
+			expectPreserved: []string{"# Header", "Content without end"}, // unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RemoveBlurb(tt.content)
+
+			// Should not contain markers
+			if strings.Contains(result, "<!-- bv-agent-instructions") &&
+				strings.Contains(result, "<!-- end-bv-agent-instructions -->") {
+				t.Error("RemoveBlurb() result still contains both markers")
+			}
+
+			for _, s := range tt.expectPreserved {
+				if !strings.Contains(result, s) {
+					t.Errorf("RemoveBlurb() result missing expected content %q", s)
+				}
+			}
+		})
+	}
+}
+
+// TestContainsAnyBlurbEdgeCases tests edge cases for combined detection.
+func TestContainsAnyBlurbEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name: "both legacy and current (should not happen but test anyway)",
+			content: `# AGENTS.md
+
+### Using bv as an AI sidecar
+
+--robot-insights
+--robot-plan
+bv already computes the hard parts for you.
+
+<!-- bv-agent-instructions-v1 -->
+Current blurb
+<!-- end-bv-agent-instructions -->
+`,
+			expected: true,
+		},
+		{
+			name:     "only start marker no end",
+			content:  "<!-- bv-agent-instructions-v1 -->\nContent",
+			expected: true, // ContainsBlurb checks for start marker only
+		},
+		{
+			name:     "only end marker",
+			content:  "Content\n<!-- end-bv-agent-instructions -->",
+			expected: false,
+		},
+		{
+			name:     "marker inside code block",
+			content:  "```\n<!-- bv-agent-instructions-v1 -->\n```",
+			expected: true, // simple string check doesn't parse markdown
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ContainsAnyBlurb(tt.content)
+			if result != tt.expected {
+				t.Errorf("ContainsAnyBlurb() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
