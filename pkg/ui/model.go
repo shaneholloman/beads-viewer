@@ -904,7 +904,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.issues = newIssues
 		cachedAnalyzer := analysis.NewCachedAnalyzer(newIssues, nil)
 		m.analyzer = cachedAnalyzer.Analyzer
-		m.analysis = cachedAnalyzer.AnalyzeAsync()
+		m.analysis = cachedAnalyzer.AnalyzeAsync(context.Background())
 		cacheHit := cachedAnalyzer.WasCacheHit()
 		m.labelHealthCached = false
 		m.attentionCached = false
@@ -2642,7 +2642,7 @@ func (m *Model) renderHelpOverlay() string {
 	sb.WriteString(sectionStyle.Render("Graph View"))
 	sb.WriteString("\n")
 	graphKeys := []struct{ key, desc string }{
-		{"h/j/k/l", "Navigate nodes"},
+		{"hjkl", "Navigate nodes"},
 		{"H/L", "Scroll canvas left/right"},
 		{"PgUp/PgDn", "Scroll canvas up/down"},
 		{"Enter", "Jump to selected issue"},
