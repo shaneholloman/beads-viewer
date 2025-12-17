@@ -15,8 +15,24 @@ import (
 type historyFocus int
 
 const (
-	historyFocusList historyFocus = iota
-	historyFocusDetail
+	historyFocusList   historyFocus = iota // Left pane (beads or commits)
+	historyFocusMiddle                     // Middle pane for 3-pane layout (bv-xrfh)
+	historyFocusDetail                     // Right pane (details)
+)
+
+// historyLayout tracks the responsive layout mode (bv-xrfh)
+type historyLayout int
+
+const (
+	layoutNarrow   historyLayout = iota // < 100 cols: two-pane optimized
+	layoutStandard                      // 100-150 cols: three-pane standard
+	layoutWide                          // > 150 cols: three-pane with timeline
+)
+
+// Layout breakpoints (bv-xrfh)
+const (
+	layoutBreakpointStandard = 100 // Width to switch to 3-pane
+	layoutBreakpointWide     = 150 // Width to switch to wide mode
 )
 
 // historyViewMode tracks bead-centric vs git-centric view (bv-tl3n)
@@ -270,12 +286,26 @@ func (h *HistoryModel) MoveDown() {
 	}
 }
 
-// ToggleFocus switches between list and detail panes
+// ToggleFocus cycles through panes based on current layout (bv-xrfh)
 func (h *HistoryModel) ToggleFocus() {
-	if h.focused == historyFocusList {
-		h.focused = historyFocusDetail
+	panes := h.paneCount()
+	if panes == 3 {
+		// Three-pane: List -> Middle -> Detail -> List
+		switch h.focused {
+		case historyFocusList:
+			h.focused = historyFocusMiddle
+		case historyFocusMiddle:
+			h.focused = historyFocusDetail
+		default:
+			h.focused = historyFocusList
+		}
 	} else {
-		h.focused = historyFocusList
+		// Two-pane: List <-> Detail
+		if h.focused == historyFocusList {
+			h.focused = historyFocusDetail
+		} else {
+			h.focused = historyFocusList
+		}
 	}
 }
 
@@ -821,6 +851,28 @@ func (h *HistoryModel) HasReport() bool {
 	return h.report != nil
 }
 
+// determineLayout returns the appropriate layout based on terminal width (bv-xrfh)
+func (h *HistoryModel) determineLayout() historyLayout {
+	if h.width < layoutBreakpointStandard {
+		return layoutNarrow
+	} else if h.width < layoutBreakpointWide {
+		return layoutStandard
+	}
+	return layoutWide
+}
+
+// paneCount returns the number of visible panes for the current layout (bv-xrfh)
+func (h *HistoryModel) paneCount() int {
+	switch h.determineLayout() {
+	case layoutNarrow:
+		return 2
+	case layoutStandard, layoutWide:
+		return 3
+	default:
+		return 2
+	}
+}
+
 // View renders the history view
 func (h *HistoryModel) View() string {
 	if h.report == nil {
@@ -838,8 +890,20 @@ func (h *HistoryModel) View() string {
 		}
 	}
 
-	// Calculate panel widths (40% list, 60% detail)
-	listWidth := int(float64(h.width) * 0.4)
+	// Dispatch to layout-specific renderer (bv-xrfh)
+	layout := h.determineLayout()
+	switch layout {
+	case layoutStandard, layoutWide:
+		return h.renderThreePaneView()
+	default:
+		return h.renderTwoPaneView()
+	}
+}
+
+// renderTwoPaneView renders the narrow two-pane layout (bv-xrfh)
+func (h *HistoryModel) renderTwoPaneView() string {
+	// Calculate panel widths (45% list, 55% detail for narrow)
+	listWidth := int(float64(h.width) * 0.45)
 	detailWidth := h.width - listWidth
 
 	// Render header
@@ -857,6 +921,49 @@ func (h *HistoryModel) View() string {
 
 	// Combine panels
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, detailPanel)
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, panels)
+}
+
+// renderThreePaneView renders the three-pane layout for wider terminals (bv-xrfh)
+func (h *HistoryModel) renderThreePaneView() string {
+	layout := h.determineLayout()
+
+	// Calculate panel widths based on layout
+	var listWidth, middleWidth, detailWidth int
+	if layout == layoutWide {
+		// Wide: 25% | 30% | 45%
+		listWidth = int(float64(h.width) * 0.25)
+		middleWidth = int(float64(h.width) * 0.30)
+		detailWidth = h.width - listWidth - middleWidth
+	} else {
+		// Standard: 30% | 35% | 35%
+		listWidth = int(float64(h.width) * 0.30)
+		middleWidth = int(float64(h.width) * 0.35)
+		detailWidth = h.width - listWidth - middleWidth
+	}
+
+	// Render header
+	header := h.renderHeader()
+
+	// Render panels based on view mode
+	var listPanel, middlePanel, detailPanel string
+	panelHeight := h.height - 2
+
+	if h.viewMode == historyModeGit {
+		// Git mode: commits on left, related beads in middle, detail on right
+		listPanel = h.renderGitCommitListPanel(listWidth, panelHeight)
+		middlePanel = h.renderGitBeadListPanel(middleWidth, panelHeight)
+		detailPanel = h.renderGitDetailPanel(detailWidth, panelHeight)
+	} else {
+		// Bead mode: beads on left, commits in middle, detail on right
+		listPanel = h.renderListPanel(listWidth, panelHeight)
+		middlePanel = h.renderCommitMiddlePanel(middleWidth, panelHeight)
+		detailPanel = h.renderDetailPanel(detailWidth, panelHeight)
+	}
+
+	// Combine panels
+	panels := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, middlePanel, detailPanel)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panels)
 }
@@ -1460,6 +1567,160 @@ func (h *HistoryModel) renderGitDetailPanel(width, height int) string {
 	// Truncate if too many lines
 	if len(lines) > height-2 {
 		lines = lines[:height-2]
+	}
+
+	content := strings.Join(lines, "\n")
+	return panelStyle.Render(content)
+}
+
+// renderCommitMiddlePanel renders commits for selected bead in middle pane (bv-xrfh)
+func (h *HistoryModel) renderCommitMiddlePanel(width, height int) string {
+	t := h.theme
+
+	borderColor := t.Muted
+	if h.focused == historyFocusMiddle {
+		borderColor = t.Primary
+	}
+
+	panelStyle := t.Renderer.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(width - 2).
+		Height(height - 2)
+
+	hist := h.SelectedHistory()
+	if hist == nil {
+		return panelStyle.Render("Select a bead to view commits")
+	}
+
+	var lines []string
+	headerStyle := t.Renderer.NewStyle().Bold(true).Foreground(t.Primary).Width(width - 4)
+	lines = append(lines, headerStyle.Render("COMMITS"))
+
+	sepWidth := width - 4
+	if sepWidth < 1 {
+		sepWidth = 1
+	}
+	lines = append(lines, strings.Repeat("─", sepWidth))
+
+	visibleItems := height - 5
+	if visibleItems < 1 {
+		visibleItems = 1
+	}
+
+	for i := 0; i < len(hist.Commits) && i < visibleItems; i++ {
+		commit := hist.Commits[i]
+		isSelected := i == h.selectedCommit && h.focused == historyFocusMiddle
+
+		indicator := "  "
+		if isSelected {
+			indicator = "▸ "
+		}
+
+		shaStyle := t.Renderer.NewStyle().Foreground(t.Primary)
+		if isSelected {
+			shaStyle = shaStyle.Bold(true)
+		}
+
+		maxMsgLen := width - len(commit.ShortSHA) - 8
+		if maxMsgLen < 10 {
+			maxMsgLen = 10
+		}
+		msg := commit.Message
+		if len(msg) > maxMsgLen {
+			msg = msg[:maxMsgLen-1] + "…"
+		}
+
+		line := fmt.Sprintf("%s%s %s", indicator, shaStyle.Render(commit.ShortSHA), msg)
+		lines = append(lines, line)
+	}
+
+	for len(lines) < height-2 {
+		lines = append(lines, "")
+	}
+
+	content := strings.Join(lines, "\n")
+	return panelStyle.Render(content)
+}
+
+// renderGitBeadListPanel renders related beads for selected commit in middle pane (bv-xrfh)
+func (h *HistoryModel) renderGitBeadListPanel(width, height int) string {
+	t := h.theme
+
+	borderColor := t.Muted
+	if h.focused == historyFocusMiddle {
+		borderColor = t.Primary
+	}
+
+	panelStyle := t.Renderer.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Width(width - 2).
+		Height(height - 2)
+
+	commit := h.SelectedGitCommit()
+	if commit == nil {
+		return panelStyle.Render("Select a commit to view beads")
+	}
+
+	var lines []string
+	headerStyle := t.Renderer.NewStyle().Bold(true).Foreground(t.Primary).Width(width - 4)
+	lines = append(lines, headerStyle.Render("RELATED BEADS"))
+
+	sepWidth := width - 4
+	if sepWidth < 1 {
+		sepWidth = 1
+	}
+	lines = append(lines, strings.Repeat("─", sepWidth))
+
+	visibleItems := height - 5
+	if visibleItems < 1 {
+		visibleItems = 1
+	}
+
+	for i := 0; i < len(commit.BeadIDs) && i < visibleItems; i++ {
+		beadID := commit.BeadIDs[i]
+		isSelected := i == h.selectedRelatedBead && h.focused == historyFocusMiddle
+
+		indicator := "  "
+		if isSelected {
+			indicator = "▸ "
+		}
+
+		beadStyle := t.Renderer.NewStyle()
+		statusIcon := "○"
+		title := beadID
+
+		if h.report != nil {
+			if hist, ok := h.report.Histories[beadID]; ok {
+				title = hist.Title
+				switch hist.Status {
+				case "closed":
+					statusIcon = "✓"
+				case "in_progress":
+					statusIcon = "●"
+				}
+			}
+		}
+
+		if isSelected {
+			beadStyle = beadStyle.Bold(true).Foreground(t.Primary)
+		}
+
+		maxLen := width - 12
+		if maxLen < 10 {
+			maxLen = 10
+		}
+		if len(title) > maxLen {
+			title = title[:maxLen-1] + "…"
+		}
+
+		beadLine := fmt.Sprintf("%s%s %s", indicator, statusIcon, beadStyle.Render(title))
+		lines = append(lines, beadLine)
+	}
+
+	for len(lines) < height-2 {
+		lines = append(lines, "")
 	}
 
 	content := strings.Join(lines, "\n")

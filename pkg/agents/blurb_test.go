@@ -230,3 +230,184 @@ func TestSupportedAgentFiles(t *testing.T) {
 		t.Errorf("Missing expected file in SupportedAgentFiles: %s", missing)
 	}
 }
+
+// LegacyBlurbContent is a sample of the old-format blurb (pre-v1, without HTML markers)
+const LegacyBlurbContent = `### Using bv as an AI sidecar
+
+If you're an AI agent (like Claude, GPT, Codex, etc.), bv can serve as your
+external memory and decision-support system for handling complex multi-part
+coding tasks.
+
+**Entry point**: Always start with ` + "`" + `bv --robot-triage` + "`" + `
+
+**Available robot flags**:
+- ` + "`" + `--robot-triage` + "`" + ` - Get structured task overview and priorities
+- ` + "`" + `--robot-insights` + "`" + ` - Deep analysis with recommendations
+- ` + "`" + `--robot-plan` + "`" + ` - Generate actionable task breakdown
+
+**Why use robot flags?**
+bv already computes the hard parts for you.
+` + "```"
+
+func TestContainsLegacyBlurb(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "empty content",
+			content:  "",
+			expected: false,
+		},
+		{
+			name:     "no blurb",
+			content:  "# My AGENTS.md\n\nSome other content.",
+			expected: false,
+		},
+		{
+			name:     "has legacy blurb",
+			content:  "# My AGENTS.md\n\n" + LegacyBlurbContent,
+			expected: true,
+		},
+		{
+			name:     "has current blurb (not legacy)",
+			content:  "# My AGENTS.md\n\n" + AgentBlurb,
+			expected: false,
+		},
+		{
+			name:     "partial legacy (missing patterns)",
+			content:  "# My AGENTS.md\n\n### Using bv as an AI sidecar\nJust a header.",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ContainsLegacyBlurb(tt.content)
+			if result != tt.expected {
+				t.Errorf("ContainsLegacyBlurb() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestContainsAnyBlurb(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "no blurb",
+			content:  "# My AGENTS.md",
+			expected: false,
+		},
+		{
+			name:     "has current blurb",
+			content:  "# AGENTS.md\n\n" + AgentBlurb,
+			expected: true,
+		},
+		{
+			name:     "has legacy blurb",
+			content:  "# AGENTS.md\n\n" + LegacyBlurbContent,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ContainsAnyBlurb(tt.content)
+			if result != tt.expected {
+				t.Errorf("ContainsAnyBlurb() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRemoveLegacyBlurb(t *testing.T) {
+	// Content with legacy blurb
+	withLegacy := "# My AGENTS.md\n\nSome content.\n\n" + LegacyBlurbContent + "\n\n## Other Section\n"
+	result := RemoveLegacyBlurb(withLegacy)
+
+	// Should not contain legacy markers
+	if strings.Contains(result, "### Using bv as an AI sidecar") {
+		t.Error("RemoveLegacyBlurb() result still contains legacy header")
+	}
+	if strings.Contains(result, "--robot-insights") {
+		t.Error("RemoveLegacyBlurb() result still contains robot flags")
+	}
+
+	// Should preserve original content before and after
+	if !strings.Contains(result, "Some content.") {
+		t.Error("RemoveLegacyBlurb() did not preserve content before blurb")
+	}
+	if !strings.Contains(result, "## Other Section") {
+		t.Error("RemoveLegacyBlurb() did not preserve content after blurb")
+	}
+}
+
+func TestRemoveLegacyBlurbNoLegacy(t *testing.T) {
+	content := "# My AGENTS.md\n\nNo legacy blurb here."
+	result := RemoveLegacyBlurb(content)
+
+	// Should be unchanged
+	if result != content {
+		t.Errorf("RemoveLegacyBlurb() modified content without legacy: got %q, want %q", result, content)
+	}
+}
+
+func TestUpdateBlurbFromLegacy(t *testing.T) {
+	// Start with content containing legacy blurb
+	legacyContent := "# My AGENTS.md\n\n" + LegacyBlurbContent + "\n"
+	result := UpdateBlurb(legacyContent)
+
+	// Should have exactly one current blurb
+	count := strings.Count(result, BlurbStartMarker)
+	if count != 1 {
+		t.Errorf("UpdateBlurb() from legacy resulted in %d blurbs, want 1", count)
+	}
+
+	// Should have current blurb content
+	if !strings.Contains(result, "bd ready") {
+		t.Error("UpdateBlurb() from legacy missing current blurb content")
+	}
+
+	// Should NOT have legacy content
+	if strings.Contains(result, "--robot-insights") {
+		t.Error("UpdateBlurb() from legacy still contains legacy content")
+	}
+
+	// Should preserve header
+	if !strings.Contains(result, "# My AGENTS.md") {
+		t.Error("UpdateBlurb() from legacy did not preserve original header")
+	}
+}
+
+func TestNeedsUpdateLegacy(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected bool
+	}{
+		{
+			name:     "legacy blurb needs update",
+			content:  "# AGENTS.md\n\n" + LegacyBlurbContent,
+			expected: true,
+		},
+		{
+			name:     "current blurb no update",
+			content:  "# AGENTS.md\n\n" + AgentBlurb,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NeedsUpdate(tt.content)
+			if result != tt.expected {
+				t.Errorf("NeedsUpdate() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
