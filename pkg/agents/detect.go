@@ -13,10 +13,13 @@ type AgentFileDetection struct {
 	// FileType is the type of file found ("AGENTS.md", "CLAUDE.md", etc.)
 	FileType string
 
-	// HasBlurb indicates whether the file already contains our blurb
+	// HasBlurb indicates whether the file already contains our blurb (current or legacy)
 	HasBlurb bool
 
-	// BlurbVersion is the version of the blurb found (0 if none)
+	// HasLegacyBlurb indicates the file has the old-format blurb (pre-v1, no HTML markers)
+	HasLegacyBlurb bool
+
+	// BlurbVersion is the version of the blurb found (0 if none or legacy)
 	BlurbVersion int
 
 	// Content is the file content (populated if file was read)
@@ -33,8 +36,12 @@ func (d AgentFileDetection) NeedsBlurb() bool {
 	return d.Found() && !d.HasBlurb
 }
 
-// NeedsUpgrade returns true if the file has an older version of the blurb.
+// NeedsUpgrade returns true if the file has an older version of the blurb
+// (either legacy format or outdated versioned blurb).
 func (d AgentFileDetection) NeedsUpgrade() bool {
+	if d.HasLegacyBlurb {
+		return true
+	}
 	return d.HasBlurb && d.BlurbVersion < BlurbVersion
 }
 
@@ -89,13 +96,15 @@ func checkAgentFile(filePath, fileType string) AgentFileDetection {
 	}
 
 	contentStr := string(content)
+	hasLegacy := ContainsLegacyBlurb(contentStr)
 
 	return AgentFileDetection{
-		FilePath:     filePath,
-		FileType:     fileType,
-		HasBlurb:     ContainsBlurb(contentStr),
-		BlurbVersion: GetBlurbVersion(contentStr),
-		Content:      contentStr,
+		FilePath:       filePath,
+		FileType:       fileType,
+		HasBlurb:       ContainsAnyBlurb(contentStr),
+		HasLegacyBlurb: hasLegacy,
+		BlurbVersion:   GetBlurbVersion(contentStr),
+		Content:        contentStr,
 	}
 }
 
