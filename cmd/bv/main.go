@@ -382,8 +382,10 @@ func main() {
 		fmt.Println("      - summary.health_trend: 'improving', 'degrading', or 'stable'")
 		fmt.Println("")
 		fmt.Println("  --as-of <commit|date>")
-		fmt.Println("      View issue state at a point in time.")
-		fmt.Println("      Useful for reviewing historical project state.")
+		fmt.Println("      View issue state at a point in time (works with all robot commands).")
+		fmt.Println("      Useful for historical analysis without modifying the working tree.")
+		fmt.Println("      Robot outputs include 'as_of' and 'as_of_commit' metadata fields.")
+		fmt.Println("      Examples: --as-of HEAD~30, --as-of v1.0.0, --as-of '2024-01-01'")
 		fmt.Println("")
 		fmt.Println("  --robot-diff")
 		fmt.Println("      Output diff as JSON (use with --diff-since).")
@@ -792,8 +794,29 @@ func main() {
 	var issues []model.Issue
 	var beadsPath string
 	var workspaceInfo *workspace.LoadSummary
+	var asOfResolved string // Resolved commit SHA when using --as-of (for robot output metadata)
 
-	if *workspaceConfig != "" {
+	if *asOf != "" {
+		// Time-travel mode: load historical issues from git
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
+			os.Exit(1)
+		}
+		gitLoader := loader.NewGitLoader(cwd)
+		issues, err = gitLoader.LoadAt(*asOf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading issues at %s: %v\n", *asOf, err)
+			os.Exit(1)
+		}
+		// Resolve to commit SHA for metadata
+		asOfResolved, _ = gitLoader.ResolveRevision(*asOf)
+		// No live reload for historical view
+		beadsPath = ""
+		if !envRobot && len(issues) > 0 {
+			fmt.Fprintf(os.Stderr, "Loaded %d issues from %s (%s)\n", len(issues), *asOf, asOfResolved[:min(7, len(asOfResolved))])
+		}
+	} else if *workspaceConfig != "" {
 		// Load from workspace configuration
 		loadedIssues, results, err := workspace.LoadAllFromConfig(context.Background(), *workspaceConfig)
 		if err != nil {
@@ -1781,6 +1804,8 @@ func main() {
 		output := struct {
 			GeneratedAt    string                  `json:"generated_at"`
 			DataHash       string                  `json:"data_hash"`
+			AsOf           string                  `json:"as_of,omitempty"`        // Historical snapshot ref
+			AsOfCommit     string                  `json:"as_of_commit,omitempty"` // Resolved commit SHA
 			AnalysisConfig analysis.AnalysisConfig `json:"analysis_config"`
 			Status         analysis.MetricStatus   `json:"status"`
 			LabelScope     string                  `json:"label_scope,omitempty"`   // bv-122: Label filter applied
@@ -1793,6 +1818,8 @@ func main() {
 		}{
 			GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 			DataHash:         dataHash,
+			AsOf:             *asOf,
+			AsOfCommit:       asOfResolved,
 			AnalysisConfig:   stats.Config,
 			Status:           stats.Status(),
 			LabelScope:       *labelScope,
@@ -1858,6 +1885,8 @@ func main() {
 		output := struct {
 			GeneratedAt    string                  `json:"generated_at"`
 			DataHash       string                  `json:"data_hash"`
+			AsOf           string                  `json:"as_of,omitempty"`        // Historical snapshot ref
+			AsOfCommit     string                  `json:"as_of_commit,omitempty"` // Resolved commit SHA
 			AnalysisConfig analysis.AnalysisConfig `json:"analysis_config"`
 			Status         analysis.MetricStatus   `json:"status"`
 			LabelScope     string                  `json:"label_scope,omitempty"`   // bv-122: Label filter applied
@@ -1867,6 +1896,8 @@ func main() {
 		}{
 			GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
 			DataHash:       dataHash,
+			AsOf:           *asOf,
+			AsOfCommit:     asOfResolved,
 			AnalysisConfig: cfg,
 			Status:         status,
 			LabelScope:     *labelScope,
@@ -1967,6 +1998,8 @@ func main() {
 		output := struct {
 			GeneratedAt       string                                    `json:"generated_at"`
 			DataHash          string                                    `json:"data_hash"`
+			AsOf              string                                    `json:"as_of,omitempty"`        // Historical snapshot ref
+			AsOfCommit        string                                    `json:"as_of_commit,omitempty"` // Resolved commit SHA
 			AnalysisConfig    analysis.AnalysisConfig                   `json:"analysis_config"`
 			Status            analysis.MetricStatus                     `json:"status"`
 			LabelScope        string                                    `json:"label_scope,omitempty"`   // bv-122: Label filter applied
@@ -1988,6 +2021,8 @@ func main() {
 		}{
 			GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
 			DataHash:          dataHash,
+			AsOf:              *asOf,
+			AsOfCommit:        asOfResolved,
 			AnalysisConfig:    cfg,
 			Status:            status,
 			LabelScope:        *labelScope,
@@ -2045,10 +2080,14 @@ func main() {
 				output := struct {
 					GeneratedAt string `json:"generated_at"`
 					DataHash    string `json:"data_hash"`
+					AsOf        string `json:"as_of,omitempty"`
+					AsOfCommit  string `json:"as_of_commit,omitempty"`
 					Message     string `json:"message"`
 				}{
 					GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 					DataHash:    dataHash,
+					AsOf:        *asOf,
+					AsOfCommit:  asOfResolved,
 					Message:     "No actionable items available",
 				}
 				encoder := json.NewEncoder(os.Stdout)
@@ -2064,6 +2103,8 @@ func main() {
 			output := struct {
 				GeneratedAt string   `json:"generated_at"`
 				DataHash    string   `json:"data_hash"`
+				AsOf        string   `json:"as_of,omitempty"`
+				AsOfCommit  string   `json:"as_of_commit,omitempty"`
 				ID          string   `json:"id"`
 				Title       string   `json:"title"`
 				Score       float64  `json:"score"`
@@ -2074,6 +2115,8 @@ func main() {
 			}{
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 				DataHash:    dataHash,
+				AsOf:        *asOf,
+				AsOfCommit:  asOfResolved,
 				ID:          top.ID,
 				Title:       top.Title,
 				Score:       top.Score,
@@ -2096,12 +2139,16 @@ func main() {
 		output := struct {
 			GeneratedAt string                 `json:"generated_at"`
 			DataHash    string                 `json:"data_hash"`
+			AsOf        string                 `json:"as_of,omitempty"`        // Historical snapshot ref (e.g., HEAD~30)
+			AsOfCommit  string                 `json:"as_of_commit,omitempty"` // Resolved commit SHA
 			Triage      analysis.TriageResult  `json:"triage"`
 			Feedback    *analysis.FeedbackJSON `json:"feedback,omitempty"` // bv-90: Feedback loop state
 			UsageHints  []string               `json:"usage_hints"`        // bv-84: Agent-friendly hints
 		}{
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			DataHash:    dataHash,
+			AsOf:        *asOf,
+			AsOfCommit:  asOfResolved,
 			Triage:      triage,
 			Feedback:    feedbackInfo,
 			UsageHints: []string{
@@ -2956,30 +3003,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Handle --as-of flag
+	// Handle --as-of flag for TUI mode (robot commands already handled above with historical data)
 	if *asOf != "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
-			os.Exit(1)
-		}
-
-		gitLoader := loader.NewGitLoader(cwd)
-
-		// Load historical issues
-		historicalIssues, err := gitLoader.LoadAt(*asOf)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading issues at %s: %v\n", *asOf, err)
-			os.Exit(1)
-		}
-
-		if len(historicalIssues) == 0 {
+		if len(issues) == 0 {
 			fmt.Printf("No issues found at %s.\n", *asOf)
 			os.Exit(0)
 		}
 
-		// Launch TUI with historical issues (no live reload for historical view)
-		m := ui.NewModel(historicalIssues, activeRecipe, "")
+		// Launch TUI with historical issues (already loaded, no live reload)
+		m := ui.NewModel(issues, activeRecipe, "")
 		p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 		// Optional auto-quit for automated tests: set BV_TUI_AUTOCLOSE_MS
@@ -4135,11 +4167,28 @@ func runPagesWizard(issues []model.Issue, beadsPath string) error {
 		return fmt.Errorf("failed to copy assets: %w", err)
 	}
 
+	// Export history data for time-travel feature if requested
+	if config.IncludeHistory {
+		fmt.Println("  -> Generating time-travel history data...")
+		if historyReport, err := generateHistoryForExport(exportIssues); err == nil && historyReport != nil {
+			historyPath := filepath.Join(bundlePath, "data", "history.json")
+			if historyJSON, err := json.MarshalIndent(historyReport, "", "  "); err == nil {
+				if err := os.WriteFile(historyPath, historyJSON, 0644); err != nil {
+					fmt.Printf("  -> Warning: failed to write history.json: %v\n", err)
+				} else {
+					fmt.Printf("  -> history.json (%d commits)\n", len(historyReport.Commits))
+				}
+			}
+		} else if err != nil {
+			fmt.Printf("  -> Warning: failed to generate history: %v\n", err)
+		}
+	}
+
 	fmt.Printf("  -> Bundle created: %s\n", bundlePath)
 	fmt.Println("")
 
-	// Offer preview (if deploying to GitHub)
-	if config.DeployTarget == "github" {
+	// Offer preview and deploy (for GitHub and Cloudflare)
+	if config.DeployTarget == "github" || config.DeployTarget == "cloudflare" {
 		_, err := wizard.OfferPreview()
 		if err != nil {
 			return err
