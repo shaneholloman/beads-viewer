@@ -4150,6 +4150,22 @@ func (m *Model) renderFooter() string {
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// SESSION INDICATOR - Cass coding sessions for selected bead (bv-y836)
+	// ─────────────────────────────────────────────────────────────────────────
+	sessionSection := ""
+	if sessionCount := m.getCassSessionCount(); sessionCount > 0 {
+		sessionStyle := lipgloss.NewStyle().
+			Background(ColorBgHighlight).
+			Foreground(ColorInfo).
+			Padding(0, 1)
+		countStr := fmt.Sprintf("%d", sessionCount)
+		if sessionCount > 9 {
+			countStr = "9+"
+		}
+		sessionSection = sessionStyle.Render(fmt.Sprintf("📎%s", countStr))
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// WORKSPACE BADGE - Multi-repo mode indicator
 	// ─────────────────────────────────────────────────────────────────────────
 	workspaceSection := ""
@@ -4258,6 +4274,9 @@ func (m *Model) renderFooter() string {
 	if alertsSection != "" {
 		leftWidth += lipgloss.Width(alertsSection) + 1
 	}
+	if sessionSection != "" {
+		leftWidth += lipgloss.Width(sessionSection) + 1
+	}
 	if workspaceSection != "" {
 		leftWidth += lipgloss.Width(workspaceSection) + 1
 	}
@@ -4284,6 +4303,9 @@ func (m *Model) renderFooter() string {
 	parts = append(parts, labelHint)
 	if alertsSection != "" {
 		parts = append(parts, alertsSection)
+	}
+	if sessionSection != "" {
+		parts = append(parts, sessionSection)
 	}
 	if workspaceSection != "" {
 		parts = append(parts, workspaceSection)
@@ -5299,6 +5321,32 @@ func (m *Model) showCassSessionModal() {
 	m.cassModal.SetSize(m.width, m.height)
 	m.showCassModal = true
 	m.focused = focusCassModal
+}
+
+// getCassSessionCount returns the cached session count for the selected bead (bv-y836)
+// Returns 0 if no sessions found, cass not available, or no bead selected.
+// This method only checks the cache - it never triggers new correlation requests.
+func (m *Model) getCassSessionCount() int {
+	if m.cassCorrelator == nil {
+		return 0
+	}
+
+	// Get the currently selected issue
+	selectedItem := m.list.SelectedItem()
+	if selectedItem == nil {
+		return 0
+	}
+
+	issueItem, ok := selectedItem.(IssueItem)
+	if !ok {
+		return 0
+	}
+
+	// Check the cache for this bead
+	if hint := m.cassCorrelator.GetCached(issueItem.Issue.ID); hint != nil {
+		return hint.ResultCount
+	}
+	return 0
 }
 
 // openInEditor opens the beads file in the user's preferred editor

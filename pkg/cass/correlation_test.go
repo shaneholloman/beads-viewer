@@ -342,6 +342,47 @@ func TestCorrelator_Correlate_CacheHit(t *testing.T) {
 	}
 }
 
+func TestCorrelator_GetCached(t *testing.T) {
+	// Create cache with a pre-populated entry
+	cache := NewCache()
+	hint := &CorrelationHint{
+		BeadID:      "bv-cached",
+		Results:     []SearchResult{{Agent: "claude", Snippet: "Test"}},
+		QueryUsed:   "test query",
+		ResultCount: 3,
+	}
+	cache.Set("bv-cached", hint)
+
+	correlator := &Correlator{
+		cache: cache,
+	}
+
+	t.Run("hit", func(t *testing.T) {
+		result := correlator.GetCached("bv-cached")
+		if result == nil {
+			t.Fatal("Expected cache hit")
+		}
+		if result.ResultCount != 3 {
+			t.Errorf("ResultCount = %d, want 3", result.ResultCount)
+		}
+	})
+
+	t.Run("miss", func(t *testing.T) {
+		result := correlator.GetCached("bv-uncached")
+		if result != nil {
+			t.Error("Expected cache miss")
+		}
+	})
+
+	t.Run("nil_cache", func(t *testing.T) {
+		c := &Correlator{cache: nil}
+		result := c.GetCached("bv-any")
+		if result != nil {
+			t.Error("Expected nil for nil cache")
+		}
+	})
+}
+
 func TestCorrelator_Scoring(t *testing.T) {
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 

@@ -125,6 +125,16 @@ func NewCorrelatorWithOptions(searcher *Searcher, cache *Cache, opts ...Correlat
 	return c
 }
 
+// GetCached returns the cached correlation hint for a bead without triggering a new search.
+// Returns nil if not cached or expired. This is useful for status bar indicators
+// where we don't want to block on network/process calls.
+func (c *Correlator) GetCached(beadID string) *CorrelationHint {
+	if c.cache == nil {
+		return nil
+	}
+	return c.cache.Get(beadID)
+}
+
 // Correlate finds sessions relevant to the given bead.
 // It tries multiple strategies in order of confidence:
 // 1. ID mention (highest confidence)
