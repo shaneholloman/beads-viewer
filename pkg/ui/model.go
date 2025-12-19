@@ -1906,6 +1906,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isBoardView = !m.isBoardView
 				m.isGraphView = false
 				m.isActionableView = false
+				m.isHistoryView = false
 				if m.isBoardView {
 					m.focused = focusBoard
 				} else {
@@ -1918,6 +1919,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isGraphView = !m.isGraphView
 				m.isBoardView = false
 				m.isActionableView = false
+				m.isHistoryView = false
 				if m.isGraphView {
 					m.focused = focusGraph
 				} else {
@@ -1931,6 +1933,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isActionableView = !m.isActionableView
 				m.isGraphView = false
 				m.isBoardView = false
+				m.isHistoryView = false
 				if m.isActionableView {
 					// Build execution plan
 					analyzer := analysis.NewAnalyzer(m.issues)
@@ -1952,6 +1955,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.isGraphView = false
 					m.isBoardView = false
 					m.isActionableView = false
+					m.isHistoryView = false
 					m.focused = focusInsights
 					// Refresh insights using latest analysis snapshot
 					if m.analysis != nil {
@@ -2016,6 +2020,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isGraphView = false
 				m.isBoardView = false
 				m.isActionableView = false
+				m.isHistoryView = false
 				m.focused = focusLabelDashboard
 				// Compute label health (fast; phase1 metrics only needed) with caching
 				if !m.labelHealthCached {
@@ -2040,6 +2045,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.isGraphView = false
 				m.isBoardView = false
 				m.isActionableView = false
+				m.isHistoryView = false
 				m.focused = focusInsights
 				m.showAttentionView = true
 				m.insightsPanel = NewInsightsModel(analysis.Insights{}, m.issueMap, m.theme)
@@ -3710,6 +3716,8 @@ func (m *Model) renderHelpOverlay() string {
 	filterSection := []struct{ key, desc string }{
 		{"/", "Fuzzy search"},
 		{"Ctrl+S", "Semantic search"},
+		{"H", "Hybrid ranking"},
+		{"Alt+H", "Hybrid preset"},
 		{"o", "Open issues"},
 		{"c", "Closed issues"},
 		{"r", "Ready (unblocked)"},
