@@ -2,6 +2,8 @@ project_name: bv
 builds:
   - main: ./cmd/bv
     binary: bv
+    ldflags:
+      - -s -w
     goos:
       - linux
       - darwin

@@ -540,9 +540,3 @@ Exit code: 1
 - **Critical**: nil dereference, division by zero, race conditions, resource leaks
 - **Important**: error handling, type assertions without check
 - **Contextual**: TODO/FIXME, unused variables
-
----
-
-## Contribution Policy
-
-Remove any mention of contributing/contributors from README and don't reinsert it.

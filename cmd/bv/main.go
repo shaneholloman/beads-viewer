@@ -5095,11 +5095,12 @@ func buildAttentionReason(score analysis.LabelAttentionScore) string {
 // copyViewerAssets copies the viewer HTML/JS/CSS assets to the output directory.
 // If title is provided, it replaces the default title in index.html.
 func copyViewerAssets(outputDir, title string) error {
-	// Get the path to the viewer assets embedded in the binary or relative to the executable
-	// For development, we look relative to the project root
-	// For production, assets should be embedded using go:embed
+	// First try to use embedded assets (production builds)
+	if export.HasEmbeddedAssets() {
+		return export.CopyEmbeddedAssets(outputDir, title)
+	}
 
-	// Find viewer assets directory
+	// Fall back to filesystem-based approach (development mode)
 	assetsDir := findViewerAssetsDir()
 	if assetsDir == "" {
 		return fmt.Errorf("viewer assets not found")
