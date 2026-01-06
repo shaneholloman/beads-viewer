@@ -5753,6 +5753,79 @@ func (m Model) TimeTravelDiff() *analysis.SnapshotDiff {
 	return m.timeTravelDiff
 }
 
+// FocusState returns the current focus state as a string for testing (bv-5e5q).
+// This enables testing focus transitions without exposing the internal focus type.
+func (m Model) FocusState() string {
+	switch m.focused {
+	case focusList:
+		return "list"
+	case focusDetail:
+		return "detail"
+	case focusBoard:
+		return "board"
+	case focusGraph:
+		return "graph"
+	case focusTree:
+		return "tree"
+	case focusLabelDashboard:
+		return "label_dashboard"
+	case focusInsights:
+		return "insights"
+	case focusActionable:
+		return "actionable"
+	case focusRecipePicker:
+		return "recipe_picker"
+	case focusRepoPicker:
+		return "repo_picker"
+	case focusHelp:
+		return "help"
+	case focusQuitConfirm:
+		return "quit_confirm"
+	case focusTimeTravelInput:
+		return "time_travel_input"
+	case focusHistory:
+		return "history"
+	case focusAttention:
+		return "attention"
+	case focusLabelPicker:
+		return "label_picker"
+	case focusSprint:
+		return "sprint"
+	case focusAgentPrompt:
+		return "agent_prompt"
+	case focusFlowMatrix:
+		return "flow_matrix"
+	case focusTutorial:
+		return "tutorial"
+	case focusCassModal:
+		return "cass_modal"
+	case focusUpdateModal:
+		return "update_modal"
+	default:
+		return "unknown"
+	}
+}
+
+// IsBoardView returns true if the board view is active (bv-5e5q).
+func (m Model) IsBoardView() bool {
+	return m.isBoardView
+}
+
+// IsGraphView returns true if the graph view is active (bv-5e5q).
+func (m Model) IsGraphView() bool {
+	return m.isGraphView
+}
+
+// IsActionableView returns true if the actionable view is active (bv-5e5q).
+func (m Model) IsActionableView() bool {
+	return m.isActionableView
+}
+
+// IsHistoryView returns true if the history view is active (bv-5e5q).
+func (m Model) IsHistoryView() bool {
+	return m.isHistoryView
+}
+
 // exportToMarkdown exports all issues to a Markdown file with auto-generated filename
 func (m *Model) exportToMarkdown() {
 	// Generate smart filename: beads_report_<project>_YYYY-MM-DD.md

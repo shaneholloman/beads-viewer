@@ -1354,9 +1354,10 @@ func TestViewRendersOnlyVisible(t *testing.T) {
 	output := tree.View()
 	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 
-	// Should have exactly 10 lines (viewport height)
-	if len(lines) != 10 {
-		t.Errorf("expected 10 lines, got %d", len(lines))
+	// Should have exactly 11 lines: 10 content lines + 1 position indicator (bv-2nax)
+	// The position indicator shows "[start-end of total]" when scrolling is needed
+	if len(lines) != 11 {
+		t.Errorf("expected 11 lines (10 content + 1 indicator), got %d", len(lines))
 	}
 
 	// Should contain node 50's content (issue-50)
