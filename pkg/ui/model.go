@@ -263,6 +263,14 @@ type Model struct {
 	watcher      *watcher.Watcher // File watcher for live reload
 	instanceLock *instance.Lock   // Multi-instance coordination lock
 
+	// Background Worker (Phase 2 architecture - bv-m7v8)
+	// snapshot is the current immutable data snapshot from BackgroundWorker.
+	// Access is safe without locks because Bubble Tea ensures Update() and View()
+	// don't run concurrently. When nil, the UI uses legacy m.issues/m.issueMap fields.
+	snapshot *DataSnapshot
+	// backgroundWorker manages async data loading (nil if background mode disabled)
+	backgroundWorker *BackgroundWorker
+
 	// UI Components
 	list               list.Model
 	viewport           viewport.Model
@@ -1194,6 +1202,84 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.agentPromptModal = NewAgentPromptModal(msg.FilePath, msg.FileType, m.theme)
 			m.focused = focusAgentPrompt
 		}
+
+	case SnapshotReadyMsg:
+		// Background worker has a new snapshot ready (bv-m7v8)
+		// This is the atomic pointer swap - O(1), sub-microsecond
+		if msg.Snapshot == nil {
+			return m, nil
+		}
+
+		// Store selected issue ID to restore position after swap
+		var selectedID string
+		if sel := m.list.SelectedItem(); sel != nil {
+			if item, ok := sel.(IssueItem); ok {
+				selectedID = item.Issue.ID
+			}
+		}
+
+		// Swap snapshot pointer
+		m.snapshot = msg.Snapshot
+
+		// Update legacy fields for backwards compatibility during migration
+		// Eventually these will be removed when all code reads from snapshot
+		m.issues = msg.Snapshot.Issues
+		m.issueMap = msg.Snapshot.IssueMap
+		m.analyzer = msg.Snapshot.Analyzer
+		m.analysis = msg.Snapshot.Analysis
+		m.countOpen = msg.Snapshot.CountOpen
+		m.countReady = msg.Snapshot.CountReady
+		m.countBlocked = msg.Snapshot.CountBlocked
+		m.countClosed = msg.Snapshot.CountClosed
+		m.triageScores = msg.Snapshot.TriageScores
+		m.triageReasons = msg.Snapshot.TriageReasons
+		m.unblocksMap = msg.Snapshot.UnblocksMap
+		m.quickWinSet = msg.Snapshot.QuickWinSet
+		m.blockerSet = msg.Snapshot.BlockerSet
+
+		// Clear caches that need recomputation
+		m.labelHealthCached = false
+		m.attentionCached = false
+		m.priorityHints = make(map[string]*analysis.PriorityRecommendation)
+
+		// Rebuild list items from snapshot
+		items := make([]list.Item, len(msg.Snapshot.ListItems))
+		for i := range msg.Snapshot.ListItems {
+			items[i] = msg.Snapshot.ListItems[i]
+		}
+		m.list.SetItems(items)
+
+		// Restore selection if possible
+		if selectedID != "" {
+			for i, it := range items {
+				if item, ok := it.(IssueItem); ok && item.Issue.ID == selectedID {
+					m.list.Select(i)
+					break
+				}
+			}
+		}
+
+		// Update sub-views
+		m.board.SetIssues(m.issues)
+		if ins := m.analysis.GenerateInsights(len(m.issues)); len(ins.Bottlenecks) > 0 || len(ins.Keystones) > 0 {
+			m.insightsPanel.SetInsights(ins)
+		}
+		m.graphView.SetIssues(m.issues, nil)
+
+		// Refresh detail pane if visible
+		if m.isSplitView || m.showDetails {
+			m.updateViewportContent()
+		}
+
+		// Clear ephemeral overlays
+		m.clearAttentionOverlay()
+
+		// Wait for Phase 2 if not ready
+		if msg.Snapshot.Analysis != nil {
+			cmds = append(cmds, WaitForPhase2Cmd(msg.Snapshot.Analysis))
+		}
+
+		return m, tea.Batch(cmds...)
 
 	case FileChangedMsg:
 		// File changed on disk - reload issues and recompute analysis
@@ -6206,9 +6292,12 @@ func (m *Model) openInEditor() {
 	m.statusIsError = false
 }
 
-// Stop cleans up resources (file watcher, instance lock, etc.)
+// Stop cleans up resources (file watcher, instance lock, background worker, etc.)
 // Should be called when the program exits
 func (m *Model) Stop() {
+	if m.backgroundWorker != nil {
+		m.backgroundWorker.Stop()
+	}
 	if m.watcher != nil {
 		m.watcher.Stop()
 	}
