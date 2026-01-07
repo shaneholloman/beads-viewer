@@ -18,6 +18,7 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/correlation"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/drift"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/export"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/instance"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
@@ -258,8 +259,9 @@ type Model struct {
 	issueMap  map[string]*model.Issue
 	analyzer  *analysis.Analyzer
 	analysis  *analysis.GraphStats
-	beadsPath string           // Path to beads.jsonl for reloading
-	watcher   *watcher.Watcher // File watcher for live reload
+	beadsPath    string           // Path to beads.jsonl for reloading
+	watcher      *watcher.Watcher // File watcher for live reload
+	instanceLock *instance.Lock   // Multi-instance coordination lock
 
 	// UI Components
 	list               list.Model
@@ -833,6 +835,17 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 		}
 	}
 
+	// Initialize instance lock for multi-instance coordination (bv-vrvn)
+	var instLock *instance.Lock
+	if beadsPath != "" {
+		beadsDir := filepath.Dir(beadsPath)
+		lock, err := instance.NewLock(beadsDir)
+		if err == nil {
+			instLock = lock
+		}
+		// Lock creation failure is non-fatal - we just won't have coordination
+	}
+
 	// Semantic search (bv-9gf.3): initialized lazily on first toggle.
 	semanticSearch := NewSemanticSearch()
 	semanticIDs := make([]string, 0, len(items))
@@ -870,6 +883,7 @@ func NewModel(issues []model.Issue, activeRecipe *recipe.Recipe, beadsPath strin
 		analysis:               graphStats,
 		beadsPath:              beadsPath,
 		watcher:                fileWatcher,
+		instanceLock:           instLock,
 		list:                   l,
 		viewport:               vp,
 		renderer:               renderer,
@@ -4736,6 +4750,19 @@ func (m *Model) renderFooter() string {
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// INSTANCE WARNING - Secondary instance indicator (bv-vrvn)
+	// ─────────────────────────────────────────────────────────────────────────
+	instanceSection := ""
+	if m.instanceLock != nil && !m.instanceLock.IsFirstInstance() {
+		instanceStyle := lipgloss.NewStyle().
+			Background(ColorPrioHighBg).
+			Foreground(ColorWarning).
+			Bold(true).
+			Padding(0, 1)
+		instanceSection = instanceStyle.Render(fmt.Sprintf("⚠ PID %d", m.instanceLock.HolderPID()))
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// SESSION INDICATOR - Cass coding sessions for selected bead (bv-y836)
 	// ─────────────────────────────────────────────────────────────────────────
 	sessionSection := ""
@@ -4866,6 +4893,9 @@ func (m *Model) renderFooter() string {
 	if alertsSection != "" {
 		leftWidth += lipgloss.Width(alertsSection) + 1
 	}
+	if instanceSection != "" {
+		leftWidth += lipgloss.Width(instanceSection) + 1
+	}
 	if sessionSection != "" {
 		leftWidth += lipgloss.Width(sessionSection) + 1
 	}
@@ -4898,6 +4928,9 @@ func (m *Model) renderFooter() string {
 	parts = append(parts, labelHint)
 	if alertsSection != "" {
 		parts = append(parts, alertsSection)
+	}
+	if instanceSection != "" {
+		parts = append(parts, instanceSection)
 	}
 	if sessionSection != "" {
 		parts = append(parts, sessionSection)
@@ -6173,11 +6206,14 @@ func (m *Model) openInEditor() {
 	m.statusIsError = false
 }
 
-// Stop cleans up resources (file watcher, etc.)
+// Stop cleans up resources (file watcher, instance lock, etc.)
 // Should be called when the program exits
 func (m *Model) Stop() {
 	if m.watcher != nil {
 		m.watcher.Stop()
+	}
+	if m.instanceLock != nil {
+		m.instanceLock.Release()
 	}
 }
 
