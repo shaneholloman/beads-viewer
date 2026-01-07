@@ -118,8 +118,13 @@ func NewBackgroundWorker(cfg WorkerConfig) (*BackgroundWorker, error) {
 
 // Start begins watching for file changes and processing in the background.
 // Start is idempotent - calling it multiple times has no effect.
+// Returns error if the worker has been stopped.
 func (w *BackgroundWorker) Start() error {
 	w.mu.Lock()
+	if w.state == WorkerStopped {
+		w.mu.Unlock()
+		return fmt.Errorf("worker has been stopped")
+	}
 	if w.started {
 		w.mu.Unlock()
 		return nil // Already started

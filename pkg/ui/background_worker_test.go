@@ -580,6 +580,35 @@ func TestHashPrefix(t *testing.T) {
 	}
 }
 
+func TestBackgroundWorker_StartAfterStop(t *testing.T) {
+	// Test that Start() returns error after Stop() has been called
+	cfg := WorkerConfig{
+		BeadsPath: "", // No watcher needed for this test
+	}
+
+	worker, err := NewBackgroundWorker(cfg)
+	if err != nil {
+		t.Fatalf("NewBackgroundWorker failed: %v", err)
+	}
+
+	// Start and stop the worker
+	if err := worker.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	worker.Stop()
+
+	// Attempting to start again should fail
+	err = worker.Start()
+	if err == nil {
+		t.Error("Start() after Stop() should return an error")
+	}
+
+	// Verify the worker is stopped
+	if worker.State() != WorkerStopped {
+		t.Errorf("Expected WorkerStopped state, got %v", worker.State())
+	}
+}
+
 func TestBackgroundWorker_ConcurrentTrigger(t *testing.T) {
 	// Test that concurrent TriggerRefresh calls don't cause duplicate processing
 	tmpDir := t.TempDir()
