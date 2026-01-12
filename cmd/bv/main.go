@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -30,6 +29,7 @@ import (
 	"github.com/Dicklesworthstone/beads_viewer/pkg/export"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/hooks"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/loader"
+	"github.com/Dicklesworthstone/beads_viewer/pkg/metrics"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/model"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/recipe"
 	"github.com/Dicklesworthstone/beads_viewer/pkg/search"
@@ -65,6 +65,7 @@ func main() {
 	robotLabelAttention := flag.Bool("robot-label-attention", false, "Output attention-ranked labels as JSON for AI agents")
 	attentionLimit := flag.Int("attention-limit", 5, "Limit number of labels in --robot-label-attention output")
 	robotAlerts := flag.Bool("robot-alerts", false, "Output alerts (drift + proactive) as JSON for AI agents")
+	robotMetrics := flag.Bool("robot-metrics", false, "Output performance metrics (timing, cache, memory) as JSON")
 	// Smart suggestions (bv-180)
 	robotSuggest := flag.Bool("robot-suggest", false, "Output smart suggestions (duplicates, dependencies, labels, cycles) as JSON")
 	suggestType := flag.String("suggest-type", "", "Filter suggestions by type: duplicate, dependency, label, cycle")
@@ -228,6 +229,7 @@ func main() {
 		*robotLabelFlow ||
 		*robotLabelAttention ||
 		*robotAlerts ||
+		*robotMetrics ||
 		*robotSuggest ||
 		*robotGraph ||
 		*robotSearch ||
@@ -697,7 +699,7 @@ func main() {
 		fmt.Println("")
 		fmt.Println("      --preview-pages <dir>")
 		fmt.Println("          Start local server to preview existing export.")
-		fmt.Println("          Opens http://localhost:9000 in your browser.")
+		fmt.Println("          Opens http://localhost:9000 (or next available port) in your browser.")
 		fmt.Println("          Example: bv --preview-pages ./bv-pages")
 		fmt.Println("")
 		fmt.Println("      --pages-title <title>")
@@ -1697,7 +1699,6 @@ func main() {
 
 	// Handle --robot-alerts (drift + proactive)
 	if *robotAlerts {
-		projectDir, _ := os.Getwd()
 		driftConfig, err := drift.LoadConfig(projectDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading drift config: %v\n", err)
@@ -1714,10 +1715,14 @@ func main() {
 				closedCount++
 			case model.StatusBlocked:
 				blockedCount++
-			default:
+			case model.StatusOpen, model.StatusInProgress:
 				openCount++
+			default:
+				// Ignore tombstones and any unknown statuses for summary counts.
 			}
 		}
+		actionableCount := len(analyzer.GetActionableIssues())
+		cycles := stats.Cycles()
 		curStats := baseline.GraphStats{
 			NodeCount:       stats.NodeCount,
 			EdgeCount:       stats.EdgeCount,
@@ -1725,11 +1730,34 @@ func main() {
 			OpenCount:       openCount,
 			ClosedCount:     closedCount,
 			BlockedCount:    blockedCount,
-			CycleCount:      len(stats.Cycles()),
-			ActionableCount: len(analyzer.GetActionableIssues()),
+			CycleCount:      len(cycles),
+			ActionableCount: actionableCount,
 		}
+
+		// Default behavior (no baseline): drift comparisons are suppressed by using
+		// baseline=current for stats, while still allowing cycle/staleness/cascade alerts.
 		bl := &baseline.Baseline{Stats: curStats}
-		cur := &baseline.Baseline{Stats: curStats, Cycles: stats.Cycles()}
+		cur := &baseline.Baseline{Stats: curStats, Cycles: cycles}
+
+		// If a baseline exists, compare against it for real drift deltas.
+		if baseline.Exists(baselinePath) {
+			loaded, err := baseline.Load(baselinePath)
+			if err != nil {
+				if !envRobot {
+					fmt.Fprintf(os.Stderr, "Warning: Error loading baseline: %v\n", err)
+				}
+			} else {
+				bl = loaded
+				topMetrics := baseline.TopMetrics{
+					PageRank:     buildMetricItems(stats.PageRank(), 10),
+					Betweenness:  buildMetricItems(stats.Betweenness(), 10),
+					CriticalPath: buildMetricItems(stats.CriticalPathScore(), 10),
+					Hubs:         buildMetricItems(stats.Hubs(), 10),
+					Authorities:  buildMetricItems(stats.Authorities(), 10),
+				}
+				cur = &baseline.Baseline{Stats: curStats, TopMetrics: topMetrics, Cycles: cycles}
+			}
+		}
 
 		calc := drift.NewCalculator(bl, cur, driftConfig)
 		calc.SetIssues(issues)
@@ -4162,6 +4190,18 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --robot-metrics flag (bv-84tp)
+	if *robotMetrics {
+		output := metrics.GetAllMetrics()
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding metrics: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Handle --diff-since flag
 	if *diffSince != "" {
 		// Auto-enable robot diff for non-interactive/agent contexts
@@ -5646,67 +5686,9 @@ func escapeMarkdownTableCell(s string) string {
 
 // runPreviewServer starts a local HTTP server to preview the static site.
 func runPreviewServer(dir string) error {
-	// Check directory exists
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return fmt.Errorf("directory not found: %s", dir)
-	}
-
-	// Check for index.html
-	indexPath := filepath.Join(dir, "index.html")
-	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		return fmt.Errorf("index.html not found in %s (did you run --export-pages first?)", dir)
-	}
-
-	port := 9000
-	fmt.Printf("Starting preview server at http://localhost:%d\n", port)
-	fmt.Printf("Serving files from: %s\n", dir)
-	fmt.Println("Press Ctrl+C to stop")
-	fmt.Println("")
-
-	// Try to open browser
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		openBrowser(fmt.Sprintf("http://localhost:%d", port))
-	}()
-
-	// Start HTTP server
-	http.Handle("/", http.FileServer(http.Dir(dir)))
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-}
-
-// openBrowser opens the default browser to the given URL.
-// Set BV_NO_BROWSER=1 to suppress browser opening (useful for tests).
-func openBrowser(url string) {
-	// Skip browser opening in test mode or when explicitly disabled
-	if os.Getenv("BV_NO_BROWSER") != "" || os.Getenv("BV_TEST_MODE") != "" {
-		return
-	}
-
-	var cmd string
-	var args []string
-
-	switch {
-	case isCommandAvailable("open"):
-		cmd = "open"
-		args = []string{url}
-	case isCommandAvailable("xdg-open"):
-		cmd = "xdg-open"
-		args = []string{url}
-	case isCommandAvailable("cmd"):
-		cmd = "cmd"
-		args = []string{"/c", "start", url}
-	default:
-		fmt.Printf("Open %s in your browser\n", url)
-		return
-	}
-
-	exec.Command(cmd, args...).Start()
-}
-
-// isCommandAvailable checks if a command is available in PATH.
-func isCommandAvailable(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
+	cfg := export.DefaultPreviewConfig()
+	cfg.BundlePath = dir
+	return export.StartPreviewWithConfig(cfg)
 }
 
 // runPagesWizard runs the interactive deployment wizard (bv-10g).
