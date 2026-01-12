@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // AppendBlurbToFile appends the agent blurb to the specified file.
@@ -131,6 +132,17 @@ func atomicWrite(filePath string, content []byte) error {
 
 	// Atomic rename
 	if err := os.Rename(tmpPath, filePath); err != nil {
+		// Windows does not allow renaming over an existing file.
+		if runtime.GOOS == "windows" {
+			if rmErr := os.Remove(filePath); rmErr == nil {
+				if err2 := os.Rename(tmpPath, filePath); err2 == nil {
+					success = true
+					return nil
+				} else {
+					return fmt.Errorf("rename temp file: %w", err2)
+				}
+			}
+		}
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 

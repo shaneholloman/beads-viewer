@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -181,12 +182,22 @@ func (l *Lock) checkStale() {
 	file.Close()
 
 	// Atomic rename to take over the lock
-	// On most filesystems, rename is atomic and will overwrite the existing file
+	// On most filesystems, rename is atomic and will overwrite the existing file.
+	// Windows does not allow rename over an existing file, so fall back to remove + rename.
 	if err := os.Rename(tmpPath, l.path); err != nil {
+		if runtime.GOOS == "windows" {
+			if rmErr := os.Remove(l.path); rmErr == nil {
+				if err2 := os.Rename(tmpPath, l.path); err2 == nil {
+					// Success after Windows-safe fallback.
+					goto verify
+				}
+			}
+		}
 		os.Remove(tmpPath)
 		return
 	}
 
+verify:
 	// Verify we won the race by re-reading and checking our PID
 	// This handles the case where two processes both rename simultaneously
 	verifyInfo, err := readLockFile(l.path)
@@ -195,8 +206,9 @@ func (l *Lock) checkStale() {
 		return
 	}
 
-	// Successfully took over the stale lock
-	l.lockFile, _ = os.OpenFile(l.path, os.O_WRONLY, 0644)
+	// Successfully took over the stale lock.
+	// The lock is enforced by file existence + content, so we don't need to keep
+	// the file open after takeover (it will be closed by the OS on exit anyway).
 	l.isFirst = true
 	l.pid = os.Getpid()
 }
